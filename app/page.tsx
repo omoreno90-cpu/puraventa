@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Inter } from "next/font/google";
-import { obtenerAnuncios, type Anuncio } from "../lib/storage";
+import type { Anuncio } from "../lib/storage";
 import { PROVINCIAS, CANTONES } from "@/lib/ubicaciones";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
@@ -139,7 +139,7 @@ export default function HomePage() {
   const [cat, setCat] = useState<(typeof CATEGORIAS)[number]>("Todas");
   const [mostrarResto, setMostrarResto] = useState(false);
 
-  // ✅ nuevo: filtro por ubicación (cantón/zona)
+  // filtro por ubicación (cantón/zona)
   const [ubicacion, setUbicacion] = useState<string>("Cualquiera");
 
   // cuando cambias provincia, resetea ubicación
@@ -152,7 +152,30 @@ export default function HomePage() {
     return CANTONES[prov] ?? [];
   }, [prov]);
 
-  const anuncios = useMemo(() => obtenerAnuncios(), []);
+  // ✅ NUEVO: anuncios desde servidor
+  const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+
+  async function cargarAnuncios() {
+    setCargando(true);
+    setErrorCarga(null);
+    try {
+      const res = await fetch("/api/anuncios", { cache: "no-store" });
+      if (!res.ok) throw new Error("No se pudo cargar anuncios.");
+      const data = (await res.json()) as Anuncio[];
+      setAnuncios(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setErrorCarga(e?.message || "Error cargando anuncios.");
+      setAnuncios([]);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    cargarAnuncios();
+  }, []);
 
   const filtrados = useMemo(() => {
     const nq = norm(q);
@@ -169,7 +192,7 @@ export default function HomePage() {
           if (provA !== prov) return false;
         }
 
-        // ✅ ubicación (solo cuando hay provincia específica)
+        // ubicación (solo cuando hay provincia específica)
         if (prov !== "GAM" && ubicacion !== "Cualquiera") {
           if (cantonA !== ubicacion) return false;
         }
@@ -261,9 +284,9 @@ export default function HomePage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={badgeStyle()}>✓ Gratis</span>
-              <span style={badgeStyle()}>✓ Sin comisiones</span>
-              <span style={badgeStyle()}>✓ Enfocado GAM</span>
+              <span style={badgeStyle()}>✅ Gratis</span>
+              <span style={badgeStyle()}>✅ Sin comisiones</span>
+              <span style={badgeStyle()}>✅ Enfocado GAM</span>
             </div>
           </div>
 
@@ -305,6 +328,10 @@ export default function HomePage() {
 
             <button onClick={() => router.push("/publicar")} style={primaryBtn()}>
               Publicar anuncio
+            </button>
+
+            <button onClick={cargarAnuncios} style={ghostBtn()} disabled={cargando}>
+              {cargando ? "Cargando..." : "Actualizar"}
             </button>
           </div>
 
@@ -348,7 +375,6 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* ✅ Nuevo filtro de ubicación */}
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#667085", marginBottom: 8 }}>
                 Ubicación (cantón/zona)
@@ -401,7 +427,7 @@ export default function HomePage() {
 
         <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 700, color: COLORS.text }}>
-            {total} anuncio{total === 1 ? "" : "s"} encontrados
+            {cargando ? "Cargando anuncios..." : `${total} anuncio${total === 1 ? "" : "s"} encontrados`}
           </div>
           <div style={{ fontSize: 12, color: "#667085" }}>
             Mostrando: <b>{prov}</b> · <b>{cat}</b>
@@ -410,8 +436,25 @@ export default function HomePage() {
           </div>
         </div>
 
+        {errorCarga && (
+          <div style={{ marginTop: 12, ...cardStyle(), padding: 14, borderColor: "#FCA5A5" as any }}>
+            <div style={{ fontWeight: 800, color: "#991B1B" }}>Error</div>
+            <div style={{ marginTop: 6, color: "#7F1D1D" }}>{errorCarga}</div>
+            <div style={{ marginTop: 10 }}>
+              <button onClick={cargarAnuncios} style={primaryBtn()}>
+                Reintentar
+              </button>
+            </div>
+          </div>
+        )}
+
         <section style={{ marginTop: 14 }}>
-          {filtrados.length === 0 ? (
+          {cargando ? (
+            <div style={{ ...cardStyle(), padding: 18 }}>
+              <div style={{ fontWeight: 700, color: COLORS.text }}>Cargando…</div>
+              <div style={{ marginTop: 6, color: "#667085" }}>Un momento.</div>
+            </div>
+          ) : filtrados.length === 0 ? (
             <div style={{ ...cardStyle(), padding: 18 }}>
               <div style={{ fontWeight: 700, color: COLORS.text }}>No hay anuncios con esos filtros.</div>
               <div style={{ marginTop: 6, color: "#667085" }}>Prueba otra palabra o cambia zona/categoría/ubicación.</div>
@@ -457,11 +500,7 @@ function AnuncioCard({
 
   const days = mounted ? diasDesde(anuncio.creadoEn) : null;
   const label =
-    !mounted || days === null
-      ? ""
-      : days === 0
-        ? "Hoy"
-        : `Hace ${clamp(days, 1, 999)} día${days === 1 ? "" : "s"}`;
+    !mounted || days === null ? "" : days === 0 ? "Hoy" : `Hace ${clamp(days, 1, 999)} día${days === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -498,7 +537,7 @@ function AnuncioCard({
             color: COLORS.navy,
           }}
         >
-          ₡{anuncio.precio.toLocaleString("es-CR")}
+          ₡{Number(anuncio.precio || 0).toLocaleString("es-CR")}
         </div>
 
         {label && (
@@ -522,9 +561,7 @@ function AnuncioCard({
       </div>
 
       <div style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>
-          {anuncio.titulo}
-        </div>
+        <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>{anuncio.titulo}</div>
         <div style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
           {anuncio.canton}, {anuncio.provincia}
         </div>

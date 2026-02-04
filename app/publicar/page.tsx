@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Inter } from "next/font/google";
-import { guardarAnuncio, obtenerOwnerToken } from "@/lib/storage";
+import { obtenerOwnerToken } from "@/lib/storage";
 import { PROVINCIAS, CANTONES } from "@/lib/ubicaciones";
 import { moderarTexto } from "@/lib/moderacion";
 
@@ -106,6 +106,7 @@ export default function PublicarPage() {
   const [whatsapp, setWhatsapp] = useState("");
   const [fotos, setFotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [publicando, setPublicando] = useState(false);
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
 
@@ -113,7 +114,17 @@ export default function PublicarPage() {
     const files = e.target.files;
     if (!files) return;
 
+    setError(null);
+
     const list = Array.from(files).slice(0, 5);
+
+    // valida peso antes de convertir a base64 (máx 2MB por foto)
+    for (const f of list) {
+      if (f.size > 2_000_000) {
+        setError("Cada foto debe pesar menos de 2 MB.");
+        return;
+      }
+    }
 
     const urls = await Promise.all(
       list.map(
@@ -134,39 +145,76 @@ export default function PublicarPage() {
     setFotos((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  function publicar() {
+  async function publicar(e: React.FormEvent) {
+    e.preventDefault();
+    if (publicando) return;
+
     setError(null);
+    setPublicando(true);
 
-    const precioNum = Number(precio);
-    if (!Number.isFinite(precioNum) || precioNum <= 0) {
-      setError("Pon un precio válido.");
-      return;
+    try {
+      if (titulo.trim().length < 5) {
+        setError("Pon un título más descriptivo (mín. 5 caracteres).");
+        return;
+      }
+      if (descripcion.trim().length < 10) {
+        setError("Añade una descripción (mín. 10 caracteres).");
+        return;
+      }
+
+      // WhatsApp obligatorio: solo números
+      const ws = whatsapp.replace(/\D/g, "");
+      if (ws.length < 8) {
+        setError("WhatsApp es obligatorio (mínimo 8 dígitos).");
+        return;
+      }
+
+      const precioNum = Number(precio);
+      if (!Number.isFinite(precioNum) || precioNum <= 0) {
+        setError("Pon un precio válido.");
+        return;
+      }
+
+      // ✅ Moderación de texto (bloquea antes de guardar)
+      const mod = moderarTexto({ titulo, descripcion, categoria });
+      if (!mod.ok) {
+        setError(mod.mensaje || "El anuncio no cumple normas.");
+        return;
+      }
+
+      const ownerToken = obtenerOwnerToken();
+
+      const anuncio = {
+        id: crypto.randomUUID(),
+        titulo: titulo.trim(),
+        precio: precioNum,
+        provincia,
+        canton,
+        categoria,
+        descripcion: descripcion.trim(),
+        whatsapp: ws,
+        fotos,
+        creadoEn: new Date().toISOString(),
+        ownerToken,
+      };
+
+      // ✅ PUBLICAR EN SERVIDOR (API)
+      const res = await fetch("/api/anuncios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(anuncio),
+      });
+
+      if (!res.ok) {
+        throw new Error("No se pudo publicar en el servidor.");
+      }
+
+      router.push("/");
+    } catch (err: any) {
+      setError(err?.message || "Error al publicar.");
+    } finally {
+      setPublicando(false);
     }
-
-    // ✅ Moderación de texto (bloquea antes de guardar)
-    const mod = moderarTexto({ titulo, descripcion, categoria });
-    if (!mod.ok) {
-      setError(mod.mensaje || "El anuncio no cumple normas.");
-      return;
-    }
-
-    const ownerToken = obtenerOwnerToken();
-
-    guardarAnuncio({
-      id: crypto.randomUUID(),
-      titulo: titulo.trim(),
-      precio: precioNum,
-      provincia,
-      canton,
-      categoria,
-      descripcion: descripcion.trim(),
-      whatsapp: whatsapp.trim(),
-      fotos,
-      creadoEn: new Date().toISOString(),
-      ownerToken,
-    });
-
-    router.push("/");
   }
 
   const esAlquiler = categoria === "Alquiler de casas y apartamentos";
@@ -185,7 +233,7 @@ export default function PublicarPage() {
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: COLORS.text }}>Publicar anuncio</h1>
-            <button onClick={() => router.push("/")} style={ghostBtn()}>
+            <button type="button" onClick={() => router.push("/")} style={ghostBtn()}>
               Cancelar
             </button>
           </div>
@@ -221,9 +269,16 @@ export default function PublicarPage() {
             </Link>
           </div>
 
-          <div style={{ marginTop: 18, display: "grid", gap: 12 }}>
+          <form onSubmit={publicar} style={{ marginTop: 18, display: "grid", gap: 12 }}>
             <input style={inputStyle()} placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
-            <input style={inputStyle()} placeholder="Precio (₡)" value={precio} onChange={(e) => setPrecio(e.target.value)} />
+
+            <input
+              style={inputStyle()}
+              placeholder="Precio (₡)"
+              value={precio}
+              onChange={(e) => setPrecio(e.target.value)}
+              inputMode="numeric"
+            />
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select
@@ -281,13 +336,17 @@ export default function PublicarPage() {
               onChange={(e) => setDescripcion(e.target.value)}
             />
 
-            <input style={inputStyle()} placeholder="WhatsApp (opcional)" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} />
+            <input
+              style={inputStyle()}
+              placeholder="WhatsApp (obligatorio) — ej: 8888-8888"
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
+              inputMode="tel"
+            />
 
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 800, color: COLORS.text }}>Fotos (máx. 5)</div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13 }}>
-                Evita fotos con contenido sexual o sensible.
-              </div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13 }}>Evita fotos con contenido sexual o sensible.</div>
 
               <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
 
@@ -313,6 +372,7 @@ export default function PublicarPage() {
                     >
                       <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
                       <button
+                        type="button"
                         onClick={() => quitarFoto(i)}
                         style={{
                           position: "absolute",
@@ -336,8 +396,8 @@ export default function PublicarPage() {
 
             {error && <div style={{ color: COLORS.danger, fontWeight: 750 }}>{error}</div>}
 
-            <button onClick={publicar} style={primaryBtn()}>
-              Publicar anuncio
+            <button type="submit" disabled={publicando} style={primaryBtn(publicando)}>
+              {publicando ? "Publicando..." : "Publicar anuncio"}
             </button>
 
             <div style={{ marginTop: 8, fontSize: 12, color: COLORS.subtext }}>
@@ -347,7 +407,7 @@ export default function PublicarPage() {
               </Link>
               .
             </div>
-          </div>
+          </form>
         </div>
       </div>
     </main>
