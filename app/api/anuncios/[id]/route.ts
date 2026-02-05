@@ -1,73 +1,99 @@
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
+// app/api/anuncios/[id]/route.ts
 import { NextResponse } from "next/server";
-import { put, list } from "@vercel/blob";
 
-const DB_KEY = "puraventa/anuncios.json";
+type Anuncio = {
+  id: string;
+  titulo?: string;
+  descripcion?: string;
+  precio?: number;
+  provincia?: string;
+  ciudad?: string;
+  telefono?: string;
+  whatsapp?: string;
+  fotos?: string[]; // URLs
+  createdAt?: string;
+  updatedAt?: string;
+};
 
-async function readAll(): Promise<any[]> {
-  const items = await list({ prefix: DB_KEY, limit: 10 });
-  const exact = items.blobs.find((b) => b.pathname === DB_KEY);
-  if (!exact) return [];
-  const res = await fetch(exact.url, { cache: "no-store" });
-  const text = await res.text();
+// ---------- Store en memoria (para compilar + funcionar básico) ----------
+declare global {
+  // eslint-disable-next-line no-var
+  var __PURAVENTA_ANUNCIOS__: Map<string, Anuncio> | undefined;
+}
+
+function getStore(): Map<string, Anuncio> {
+  if (!globalThis.__PURAVENTA_ANUNCIOS__) {
+    globalThis.__PURAVENTA_ANUNCIOS__ = new Map<string, Anuncio>();
+  }
+  return globalThis.__PURAVENTA_ANUNCIOS__!;
+}
+
+function json(data: unknown, status = 200) {
+  return NextResponse.json(data, { status });
+}
+
+// ---------- GET /api/anuncios/:id ----------
+export async function GET(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params;
+
+  const store = getStore();
+  const anuncio = store.get(id);
+
+  if (!anuncio) {
+    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
+  }
+
+  return json({ ok: true, anuncio });
+}
+
+// ---------- PUT /api/anuncios/:id ----------
+export async function PUT(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params;
+
+  let body: Partial<Anuncio>;
   try {
-    const json = JSON.parse(text);
-    return Array.isArray(json) ? json : [];
+    body = (await req.json()) as Partial<Anuncio>;
   } catch {
-    return [];
+    return json({ ok: false, error: "Body JSON inválido" }, 400);
   }
+
+  const store = getStore();
+  const existing = store.get(id);
+
+  if (!existing) {
+    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
+  }
+
+  const updated: Anuncio = {
+    ...existing,
+    ...body,
+    id, // nunca cambies el id
+    updatedAt: new Date().toISOString(),
+  };
+
+  store.set(id, updated);
+  return json({ ok: true, anuncio: updated });
 }
 
-async function writeAll(all: any[]) {
-  await put(DB_KEY, JSON.stringify(all, null, 2), {
-    access: "private",
-    contentType: "application/json",
-    addRandomSuffix: false as any,
-  });
-}
+// ---------- DELETE /api/anuncios/:id ----------
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params;
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  try {
-    const id = String(params?.id || "").trim();
-    if (!id) return NextResponse.json({ error: "Falta id en la URL" }, { status: 400 });
+  const store = getStore();
+  const existed = store.delete(id);
 
-    const all = await readAll();
-    const item = all.find((a: any) => String(a.id) === id);
-
-    if (!item) {
-      return NextResponse.json({ error: "No existe", idPedida: id }, { status: 404 });
-    }
-
-    return NextResponse.json(item, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Error leyendo anuncio", detalle: String(e?.message || e) },
-      { status: 500 }
-    );
+  if (!existed) {
+    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
   }
-}
 
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
-  try {
-    const id = String(params?.id || "").trim();
-    if (!id) return NextResponse.json({ error: "Falta id en la URL" }, { status: 400 });
-
-    const all = await readAll();
-    const antes = all.length;
-    const nuevo = all.filter((a: any) => String(a.id) !== id);
-
-    if (nuevo.length === antes) {
-      return NextResponse.json({ error: "No existe", idPedida: id }, { status: 404 });
-    }
-
-    await writeAll(nuevo);
-    return NextResponse.json({ ok: true, borrado: id }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Error borrando anuncio", detalle: String(e?.message || e) },
-      { status: 500 }
-    );
-  }
+  return json({ ok: true, deleted: true, id });
 }
