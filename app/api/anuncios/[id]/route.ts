@@ -1,33 +1,8 @@
 import { NextResponse } from "next/server";
-
-type Anuncio = {
-  id: string;
-  titulo?: string;
-  descripcion?: string;
-  precio?: number;
-  provincia?: string;
-  ciudad?: string;
-  telefono?: string;
-  whatsapp?: string;
-  fotos?: string[];
-  createdAt: string;
-  updatedAt?: string;
-};
+import { getAnunciosStore, type Anuncio } from "@/lib/anunciosStore";
 
 type Params = { id: string };
 type Ctx = { params: Params | Promise<Params> };
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __PURAVENTA_ANUNCIOS__: Map<string, Anuncio> | undefined;
-}
-
-function getStore(): Map<string, Anuncio> {
-  if (!globalThis.__PURAVENTA_ANUNCIOS__) {
-    globalThis.__PURAVENTA_ANUNCIOS__ = new Map<string, Anuncio>();
-  }
-  return globalThis.__PURAVENTA_ANUNCIOS__!;
-}
 
 async function getId(ctx: Ctx): Promise<string> {
   const p = await Promise.resolve(ctx.params);
@@ -37,7 +12,7 @@ async function getId(ctx: Ctx): Promise<string> {
 export async function GET(_req: Request, ctx: Ctx) {
   const id = await getId(ctx);
 
-  const store = getStore();
+  const store = getAnunciosStore();
   const anuncio = store.get(id);
 
   if (!anuncio) {
@@ -53,7 +28,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 export async function PUT(req: Request, ctx: Ctx) {
   const id = await getId(ctx);
 
-  const store = getStore();
+  const store = getAnunciosStore();
   const anuncio = store.get(id);
 
   if (!anuncio) {
@@ -79,7 +54,7 @@ export async function PUT(req: Request, ctx: Ctx) {
 export async function DELETE(_req: Request, ctx: Ctx) {
   const id = await getId(ctx);
 
-  const store = getStore();
+  const store = getAnunciosStore();
   const ok = store.delete(id);
 
   if (!ok) {
@@ -91,4 +66,3 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 
   return NextResponse.json({ ok: true, deleted: true, id });
 }
-
