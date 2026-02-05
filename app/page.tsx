@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Inter } from "next/font/google";
 import type { Anuncio } from "../lib/storage";
@@ -72,7 +72,7 @@ function chipStyle(active: boolean): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     background: active ? COLORS.navySoft : COLORS.card,
     color: active ? COLORS.navy : COLORS.text,
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: "pointer",
     userSelect: "none",
   };
@@ -85,7 +85,7 @@ function primaryBtn(disabled?: boolean): React.CSSProperties {
     border: `1px solid ${COLORS.navy}`,
     background: disabled ? COLORS.border : COLORS.navy,
     color: disabled ? "#7A8193" : "white",
-    fontWeight: 650,
+    fontWeight: 800,
     cursor: disabled ? "not-allowed" : "pointer",
   };
 }
@@ -97,7 +97,7 @@ function ghostBtn(): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
     color: COLORS.text,
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: "pointer",
   };
 }
@@ -123,7 +123,7 @@ function badgeStyle(): React.CSSProperties {
     background: COLORS.card,
     color: "#475569",
     fontSize: 12,
-    fontWeight: 600,
+    fontWeight: 700,
   };
 }
 
@@ -138,9 +138,51 @@ export default function HomePage() {
   const [prov, setProv] = useState<Zona>("GAM");
   const [cat, setCat] = useState<(typeof CATEGORIAS)[number]>("Todas");
   const [mostrarResto, setMostrarResto] = useState(false);
-
-  // filtro por ubicación (cantón/zona)
   const [ubicacion, setUbicacion] = useState<string>("Cualquiera");
+
+  // ✅ AHORA: anuncios vienen del servidor (/api/anuncios)
+  const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
+
+useEffect(() => {
+  (async () => {
+    try {
+      const res = await fetch("/api/anuncios", { cache: "no-store" });
+      const data = await res.json();
+      setAnuncios(Array.isArray(data) ? data : []);
+    } catch {
+      setAnuncios([]);
+    }
+  })();
+}, []);
+
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let ok = true;
+    setLoading(true);
+
+    fetch("/api/anuncios", { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        if (!ok) return;
+        setAnuncios(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!ok) return;
+        setAnuncios([]);
+      })
+      .finally(() => {
+        if (!ok) return;
+        setLoading(false);
+      });
+
+    return () => {
+      ok = false;
+    };
+  }, []);
 
   // cuando cambias provincia, resetea ubicación
   useEffect(() => {
@@ -149,41 +191,16 @@ export default function HomePage() {
 
   const ubicacionesDisponibles = useMemo(() => {
     if (prov === "GAM") return [];
-    return CANTONES[prov] ?? [];
+    return (CANTONES as any)[prov] ?? [];
   }, [prov]);
-
-  // ✅ NUEVO: anuncios desde servidor
-  const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
-  const [cargando, setCargando] = useState(true);
-  const [errorCarga, setErrorCarga] = useState<string | null>(null);
-
-  async function cargarAnuncios() {
-    setCargando(true);
-    setErrorCarga(null);
-    try {
-      const res = await fetch("/api/anuncios", { cache: "no-store" });
-      if (!res.ok) throw new Error("No se pudo cargar anuncios.");
-      const data = (await res.json()) as Anuncio[];
-      setAnuncios(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      setErrorCarga(e?.message || "Error cargando anuncios.");
-      setAnuncios([]);
-    } finally {
-      setCargando(false);
-    }
-  }
-
-  useEffect(() => {
-    cargarAnuncios();
-  }, []);
 
   const filtrados = useMemo(() => {
     const nq = norm(q);
 
     return anuncios
-      .filter((a) => {
-        const provA = (a.provincia || "").trim();
-        const cantonA = (a.canton || "").trim();
+      .filter((a: any) => {
+        const provA = String(a?.provincia || "").trim();
+        const cantonA = String(a?.canton || "").trim();
 
         // provincia
         if (prov === "GAM") {
@@ -198,21 +215,21 @@ export default function HomePage() {
         }
 
         // categoría
-        if (cat !== "Todas" && a.categoria !== cat) return false;
+        if (cat !== "Todas" && String(a?.categoria || "") !== cat) return false;
 
         // búsqueda por palabra
         if (nq) {
           const hay =
-            norm(a.titulo).includes(nq) ||
-            norm(a.descripcion).includes(nq) ||
-            norm(a.canton).includes(nq) ||
-            norm(a.provincia).includes(nq);
+            norm(String(a?.titulo || "")).includes(nq) ||
+            norm(String(a?.descripcion || "")).includes(nq) ||
+            norm(String(a?.canton || "")).includes(nq) ||
+            norm(String(a?.provincia || "")).includes(nq);
           if (!hay) return false;
         }
 
         return true;
       })
-      .sort((x, y) => String(y.creadoEn).localeCompare(String(x.creadoEn)));
+      .sort((x: any, y: any) => String(y?.creadoEn || "").localeCompare(String(x?.creadoEn || "")));
   }, [anuncios, q, prov, cat, ubicacion]);
 
   const total = filtrados.length;
@@ -250,14 +267,14 @@ export default function HomePage() {
                 display: "grid",
                 placeItems: "center",
                 color: "white",
-                fontWeight: 700,
+                fontWeight: 900,
               }}
               title="PuraVenta"
             >
               PV
             </div>
             <div>
-              <div style={{ fontWeight: 750, color: COLORS.text }}>PuraVenta</div>
+              <div style={{ fontWeight: 900, color: COLORS.text }}>PuraVenta</div>
               <div style={{ fontSize: 12, color: "#667085", marginTop: 2 }}>Compra y vende en Costa Rica</div>
             </div>
           </div>
@@ -272,21 +289,17 @@ export default function HomePage() {
         <section style={{ ...cardStyle(), padding: 18 }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, justifyContent: "space-between" }}>
             <div style={{ minWidth: 260 }}>
-              <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.15, letterSpacing: -0.2, color: COLORS.text, fontWeight: 750 }}>
+              <h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.15, letterSpacing: -0.2, color: COLORS.text, fontWeight: 900 }}>
                 Encuentra algo bueno, rápido.
               </h1>
-              <div style={{ marginTop: 8, color: "#475569", fontWeight: 600 }}>
-                PuraVenta no gestiona pagos. Solo te conectamos.
-              </div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13 }}>
-                Consejo anti-estafa: nunca envíes dinero por adelantado.
-              </div>
+              <div style={{ marginTop: 8, color: "#475569", fontWeight: 700 }}>PuraVenta no gestiona pagos. Solo te conectamos.</div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13 }}>Consejo: paga solo al ver el producto en persona.</div>
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={badgeStyle()}>✅ Gratis</span>
-              <span style={badgeStyle()}>✅ Sin comisiones</span>
-              <span style={badgeStyle()}>✅ Enfocado GAM</span>
+              <span style={badgeStyle()}>✓ Personas reales</span>
+              <span style={badgeStyle()}>✓ Sin comisiones</span>
+              <span style={badgeStyle()}>✓ Seguro</span>
             </div>
           </div>
 
@@ -301,7 +314,7 @@ export default function HomePage() {
                 borderRadius: 14,
                 border: `1px solid ${COLORS.border}`,
                 outline: "none",
-                fontWeight: 500,
+                fontWeight: 600,
                 background: COLORS.card,
                 color: COLORS.text,
               }}
@@ -315,7 +328,7 @@ export default function HomePage() {
                 borderRadius: 14,
                 border: `1px solid ${COLORS.border}`,
                 background: COLORS.card,
-                fontWeight: 600,
+                fontWeight: 700,
                 color: COLORS.text,
               }}
             >
@@ -329,14 +342,10 @@ export default function HomePage() {
             <button onClick={() => router.push("/publicar")} style={primaryBtn()}>
               Publicar anuncio
             </button>
-
-            <button onClick={cargarAnuncios} style={ghostBtn()} disabled={cargando}>
-              {cargando ? "Cargando..." : "Actualizar"}
-            </button>
           </div>
 
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#667085", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#667085", marginBottom: 8 }}>
               Zona (por defecto: <b>GAM</b>)
             </div>
 
@@ -376,9 +385,7 @@ export default function HomePage() {
             )}
 
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#667085", marginBottom: 8 }}>
-                Ubicación (cantón/zona)
-              </div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#667085", marginBottom: 8 }}>Ubicación (cantón/zona)</div>
 
               {prov === "GAM" ? (
                 <select
@@ -389,7 +396,7 @@ export default function HomePage() {
                     borderRadius: 14,
                     border: `1px solid ${COLORS.border}`,
                     background: "#F1F5F9",
-                    fontWeight: 700,
+                    fontWeight: 800,
                     color: "#94A3B8",
                     width: "100%",
                     maxWidth: 420,
@@ -407,14 +414,14 @@ export default function HomePage() {
                     borderRadius: 14,
                     border: `1px solid ${COLORS.border}`,
                     background: COLORS.card,
-                    fontWeight: 700,
+                    fontWeight: 800,
                     color: COLORS.text,
                     width: "100%",
                     maxWidth: 420,
                   }}
                 >
                   <option value="Cualquiera">Cualquiera</option>
-                  {ubicacionesDisponibles.map((u) => (
+                  {ubicacionesDisponibles.map((u: string) => (
                     <option key={u} value={u}>
                       {u}
                     </option>
@@ -426,8 +433,8 @@ export default function HomePage() {
         </section>
 
         <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 700, color: COLORS.text }}>
-            {cargando ? "Cargando anuncios..." : `${total} anuncio${total === 1 ? "" : "s"} encontrados`}
+          <div style={{ fontWeight: 900, color: COLORS.text }}>
+            {loading ? "Cargando anuncios..." : `${total} anuncio${total === 1 ? "" : "s"} encontrados`}
           </div>
           <div style={{ fontSize: 12, color: "#667085" }}>
             Mostrando: <b>{prov}</b> · <b>{cat}</b>
@@ -436,27 +443,15 @@ export default function HomePage() {
           </div>
         </div>
 
-        {errorCarga && (
-          <div style={{ marginTop: 12, ...cardStyle(), padding: 14, borderColor: "#FCA5A5" as any }}>
-            <div style={{ fontWeight: 800, color: "#991B1B" }}>Error</div>
-            <div style={{ marginTop: 6, color: "#7F1D1D" }}>{errorCarga}</div>
-            <div style={{ marginTop: 10 }}>
-              <button onClick={cargarAnuncios} style={primaryBtn()}>
-                Reintentar
-              </button>
-            </div>
-          </div>
-        )}
-
         <section style={{ marginTop: 14 }}>
-          {cargando ? (
+          {loading ? (
             <div style={{ ...cardStyle(), padding: 18 }}>
-              <div style={{ fontWeight: 700, color: COLORS.text }}>Cargando…</div>
-              <div style={{ marginTop: 6, color: "#667085" }}>Un momento.</div>
+              <div style={{ fontWeight: 900, color: COLORS.text }}>Cargando…</div>
+              <div style={{ marginTop: 6, color: "#667085" }}>Estamos trayendo anuncios desde /api/anuncios.</div>
             </div>
           ) : filtrados.length === 0 ? (
             <div style={{ ...cardStyle(), padding: 18 }}>
-              <div style={{ fontWeight: 700, color: COLORS.text }}>No hay anuncios con esos filtros.</div>
+              <div style={{ fontWeight: 900, color: COLORS.text }}>No hay anuncios con esos filtros.</div>
               <div style={{ marginTop: 6, color: "#667085" }}>Prueba otra palabra o cambia zona/categoría/ubicación.</div>
               <div style={{ marginTop: 12 }}>
                 <button onClick={() => router.push("/publicar")} style={primaryBtn()}>
@@ -466,7 +461,7 @@ export default function HomePage() {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
-              {filtrados.map((a) => (
+              {filtrados.map((a: any) => (
                 <AnuncioCard key={a.id} anuncio={a} mounted={mounted} onOpen={() => router.push(`/anuncio/${a.id}`)} />
               ))}
             </div>
@@ -479,7 +474,7 @@ export default function HomePage() {
             <span>•</span>
             <span>PuraVenta no gestiona pagos. Solo te conectamos.</span>
             <span>•</span>
-            <span>Consejo anti-estafa: nunca envíes dinero por adelantado.</span>
+            <span>Consejo: paga solo al ver el producto en persona.</span>
           </div>
         </footer>
       </div>
@@ -492,15 +487,19 @@ function AnuncioCard({
   onOpen,
   mounted,
 }: {
-  anuncio: Anuncio;
+  anuncio: any;
   onOpen: () => void;
   mounted: boolean;
 }) {
-  const foto = anuncio.fotos?.[0] || "";
+  const foto = anuncio?.fotos?.[0] || "";
 
-  const days = mounted ? diasDesde(anuncio.creadoEn) : null;
+  const days = mounted ? diasDesde(anuncio?.creadoEn) : null;
   const label =
-    !mounted || days === null ? "" : days === 0 ? "Hoy" : `Hace ${clamp(days, 1, 999)} día${days === 1 ? "" : "s"}`;
+    !mounted || days === null
+      ? ""
+      : days === 0
+        ? "Hoy"
+        : `Hace ${clamp(days, 1, 999)} día${days === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -533,11 +532,11 @@ function AnuncioCard({
             background: "rgba(255,255,255,0.92)",
             border: `1px solid ${COLORS.border}`,
             fontSize: 12,
-            fontWeight: 650,
+            fontWeight: 800,
             color: COLORS.navy,
           }}
         >
-          ₡{Number(anuncio.precio || 0).toLocaleString("es-CR")}
+          ₡{Number(anuncio?.precio || 0).toLocaleString("es-CR")}
         </div>
 
         {label && (
@@ -551,7 +550,7 @@ function AnuncioCard({
               background: "rgba(255,255,255,0.92)",
               border: `1px solid ${COLORS.border}`,
               fontSize: 12,
-              fontWeight: 600,
+              fontWeight: 700,
               color: "#334155",
             }}
           >
@@ -561,12 +560,12 @@ function AnuncioCard({
       </div>
 
       <div style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>{anuncio.titulo}</div>
-        <div style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
-          {anuncio.canton}, {anuncio.provincia}
+        <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>{anuncio?.titulo}</div>
+        <div style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 700 }}>
+          {anuncio?.canton}, {anuncio?.provincia}
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: COLORS.muted }}>
-          Publicado: {mounted ? formatFechaISO(anuncio.creadoEn) : "—"}
+          Publicado: {mounted ? formatFechaISO(anuncio?.creadoEn) : "—"}
         </div>
       </div>
     </div>

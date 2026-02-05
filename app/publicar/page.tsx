@@ -4,7 +4,6 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Inter } from "next/font/google";
-import { obtenerOwnerToken } from "@/lib/storage";
 import { PROVINCIAS, CANTONES } from "@/lib/ubicaciones";
 import { moderarTexto } from "@/lib/moderacion";
 
@@ -19,6 +18,7 @@ const COLORS = {
   subtext: "#64748B",
   muted: "#94A3B8",
   danger: "#DC2626",
+  success: "#16A34A",
 };
 
 const CATEGORIAS = [
@@ -32,6 +32,8 @@ const CATEGORIAS = [
   "Otros",
 ] as const;
 
+type Categoria = (typeof CATEGORIAS)[number];
+
 function inputStyle(): React.CSSProperties {
   return {
     padding: "12px 14px",
@@ -39,7 +41,7 @@ function inputStyle(): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
     outline: "none",
-    fontWeight: 500,
+    fontWeight: 600,
     color: COLORS.text,
   };
 }
@@ -50,7 +52,7 @@ function selectStyle(): React.CSSProperties {
     borderRadius: 14,
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
-    fontWeight: 600,
+    fontWeight: 700,
     color: COLORS.text,
   };
 }
@@ -62,7 +64,7 @@ function primaryBtn(disabled?: boolean): React.CSSProperties {
     border: `1px solid ${COLORS.navy}`,
     background: disabled ? COLORS.border : COLORS.navy,
     color: disabled ? "#7A8193" : "white",
-    fontWeight: 750,
+    fontWeight: 850,
     cursor: disabled ? "not-allowed" : "pointer",
   };
 }
@@ -73,7 +75,7 @@ function ghostBtn(): React.CSSProperties {
     borderRadius: 14,
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
-    fontWeight: 650,
+    fontWeight: 750,
     cursor: "pointer",
     color: COLORS.text,
   };
@@ -88,10 +90,30 @@ function chipStyle(): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
     color: COLORS.text,
-    fontWeight: 700,
+    fontWeight: 800,
     fontSize: 12,
     whiteSpace: "nowrap",
   };
+}
+
+async function uploadToCloudinary(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const res = await fetch("/api/upload", {
+    method: "POST",
+    body: fd,
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const msg = data?.error || "Error subiendo foto";
+    throw new Error(msg);
+  }
+
+  if (!data?.url) throw new Error("Upload sin URL");
+  return String(data.url);
 }
 
 export default function PublicarPage() {
@@ -101,24 +123,32 @@ export default function PublicarPage() {
   const [precio, setPrecio] = useState("");
   const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
-  const [categoria, setCategoria] = useState<(typeof CATEGORIAS)[number]>("Muebles");
+  const [categoria, setCategoria] = useState<Categoria>("Muebles");
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
-  const [fotos, setFotos] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [publicando, setPublicando] = useState(false);
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
 
+  function limpiarPreviews(next: string[]) {
+    // revoca previews antiguas para no fugar memoria
+    previewUrls.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {}
+    });
+    setPreviewUrls(next);
+  }
+
   async function onPickFotos(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files) return;
-
     setError(null);
+    const list = e.target.files ? Array.from(e.target.files).slice(0, 5) : [];
+    if (list.length === 0) return;
 
-    const list = Array.from(files).slice(0, 5);
-
-    // valida peso antes de convertir a base64 (máx 2MB por foto)
+    // límite 2MB por archivo
     for (const f of list) {
       if (f.size > 2_000_000) {
         setError("Cada foto debe pesar menos de 2 MB.");
@@ -126,23 +156,16 @@ export default function PublicarPage() {
       }
     }
 
-    const urls = await Promise.all(
-      list.map(
-        (f) =>
-          new Promise<string>((resolve, reject) => {
-            const r = new FileReader();
-            r.onload = () => resolve(String(r.result));
-            r.onerror = reject;
-            r.readAsDataURL(f);
-          })
-      )
-    );
-
-    setFotos(urls);
+    setFiles(list);
+    const previews = list.map((f) => URL.createObjectURL(f));
+    limpiarPreviews(previews);
   }
 
   function quitarFoto(idx: number) {
-    setFotos((prev) => prev.filter((_, i) => i !== idx));
+    const nextFiles = files.filter((_, i) => i !== idx);
+    const nextPreviews = previewUrls.filter((_, i) => i !== idx);
+    setFiles(nextFiles);
+    limpiarPreviews(nextPreviews);
   }
 
   async function publicar(e: React.FormEvent) {
@@ -162,30 +185,37 @@ export default function PublicarPage() {
         return;
       }
 
-      // WhatsApp obligatorio: solo números
-      const ws = whatsapp.replace(/\D/g, "");
-      if (ws.length < 8) {
-        setError("WhatsApp es obligatorio (mínimo 8 dígitos).");
-        return;
-      }
-
       const precioNum = Number(precio);
       if (!Number.isFinite(precioNum) || precioNum <= 0) {
         setError("Pon un precio válido.");
         return;
       }
 
-      // ✅ Moderación de texto (bloquea antes de guardar)
+      // WhatsApp obligatorio (solo números)
+      const ws = whatsapp.replace(/\D/g, "");
+      if (ws.length < 8) {
+        setError("WhatsApp es obligatorio (mínimo 8 dígitos).");
+        return;
+      }
+
       const mod = moderarTexto({ titulo, descripcion, categoria });
       if (!mod.ok) {
         setError(mod.mensaje || "El anuncio no cumple normas.");
         return;
       }
 
-      const ownerToken = obtenerOwnerToken();
+      // 1) subir fotos a Cloudinary (si hay)
+      let fotos: string[] = [];
+      if (files.length > 0) {
+        fotos = [];
+        for (const f of files) {
+          const url = await uploadToCloudinary(f);
+          fotos.push(url);
+        }
+      }
 
-      const anuncio = {
-        id: crypto.randomUUID(),
+      // 2) guardar anuncio en el server (data/anuncios.json)
+      const payload = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
@@ -194,19 +224,17 @@ export default function PublicarPage() {
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
-        creadoEn: new Date().toISOString(),
-        ownerToken,
       };
 
-      // ✅ PUBLICAR EN SERVIDOR (API)
       const res = await fetch("/api/anuncios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(anuncio),
+        body: JSON.stringify(payload),
       });
 
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error("No se pudo publicar en el servidor.");
+        throw new Error(data?.error || "Error guardando anuncio");
       }
 
       router.push("/");
@@ -232,16 +260,16 @@ export default function PublicarPage() {
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: COLORS.text }}>Publicar anuncio</h1>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: COLORS.text }}>Publicar anuncio</h1>
             <button type="button" onClick={() => router.push("/")} style={ghostBtn()}>
               Cancelar
             </button>
           </div>
 
-          <p style={{ marginTop: 8, color: COLORS.subtext, lineHeight: 1.5 }}>
+          <p style={{ marginTop: 8, color: COLORS.subtext, lineHeight: 1.5, fontWeight: 600 }}>
             Publicar es gratis. <b>PuraVenta no gestiona pagos. Solo te conectamos.</b>
             <br />
-            Consejo anti-estafa: <b>nunca envíes dinero por adelantado.</b>
+            Recomendación: <b>queda en persona</b> y revisa el producto antes de pagar.
           </p>
 
           <div
@@ -264,7 +292,7 @@ export default function PublicarPage() {
               <span style={chipStyle()}>❌ No estafas</span>
               <span style={chipStyle()}>❌ Ilegal/armas/drogas</span>
             </div>
-            <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 800, textDecoration: "none" }}>
+            <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 900, textDecoration: "none" }}>
               Ver normas →
             </Link>
           </div>
@@ -306,7 +334,7 @@ export default function PublicarPage() {
               </select>
             </div>
 
-            <select style={selectStyle()} value={categoria} onChange={(e) => setCategoria(e.target.value as any)}>
+            <select style={selectStyle()} value={categoria} onChange={(e) => setCategoria(e.target.value as Categoria)}>
               {CATEGORIAS.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -322,7 +350,7 @@ export default function PublicarPage() {
                   borderRadius: 14,
                   padding: 12,
                   color: COLORS.text,
-                  fontWeight: 650,
+                  fontWeight: 700,
                 }}
               >
                 🏠 <b>Alquiler:</b> solo anuncios directos entre particulares. <b>No inmobiliarias</b> ni anuncios duplicados.
@@ -345,12 +373,14 @@ export default function PublicarPage() {
             />
 
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
-              <div style={{ fontWeight: 800, color: COLORS.text }}>Fotos (máx. 5)</div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13 }}>Evita fotos con contenido sexual o sensible.</div>
+              <div style={{ fontWeight: 900, color: COLORS.text }}>Fotos (máx. 5)</div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
+                Se subirán a Cloudinary automáticamente.
+              </div>
 
               <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
 
-              {fotos.length > 0 && (
+              {previewUrls.length > 0 && (
                 <div
                   style={{
                     marginTop: 12,
@@ -359,7 +389,7 @@ export default function PublicarPage() {
                     gap: 10,
                   }}
                 >
-                  {fotos.map((src, i) => (
+                  {previewUrls.map((src, i) => (
                     <div
                       key={i}
                       style={{
@@ -382,7 +412,7 @@ export default function PublicarPage() {
                           border: `1px solid ${COLORS.border}`,
                           background: "rgba(255,255,255,0.95)",
                           padding: "6px 10px",
-                          fontWeight: 800,
+                          fontWeight: 900,
                           cursor: "pointer",
                         }}
                       >
@@ -394,15 +424,15 @@ export default function PublicarPage() {
               )}
             </div>
 
-            {error && <div style={{ color: COLORS.danger, fontWeight: 750 }}>{error}</div>}
+            {error && <div style={{ color: COLORS.danger, fontWeight: 900 }}>{error}</div>}
 
             <button type="submit" disabled={publicando} style={primaryBtn(publicando)}>
               {publicando ? "Publicando..." : "Publicar anuncio"}
             </button>
 
-            <div style={{ marginTop: 8, fontSize: 12, color: COLORS.subtext }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
               Al publicar aceptas las{" "}
-              <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 800 }}>
+              <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 900 }}>
                 normas
               </Link>
               .
