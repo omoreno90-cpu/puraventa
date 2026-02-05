@@ -1,5 +1,11 @@
-// app/api/anuncios/[id]/route.ts
 import { NextResponse } from "next/server";
+
+/**
+ * API por anuncio individual
+ * GET    -> obtener anuncio
+ * PUT    -> actualizar anuncio
+ * DELETE -> borrar anuncio
+ */
 
 type Anuncio = {
   id: string;
@@ -8,14 +14,10 @@ type Anuncio = {
   precio?: number;
   provincia?: string;
   ciudad?: string;
-  telefono?: string;
   whatsapp?: string;
-  fotos?: string[]; // URLs
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt: string;
 };
 
-// ---------- Store en memoria (para compilar + funcionar básico) ----------
 declare global {
   // eslint-disable-next-line no-var
   var __PURAVENTA_ANUNCIOS__: Map<string, Anuncio> | undefined;
@@ -23,13 +25,9 @@ declare global {
 
 function getStore(): Map<string, Anuncio> {
   if (!globalThis.__PURAVENTA_ANUNCIOS__) {
-    globalThis.__PURAVENTA_ANUNCIOS__ = new Map<string, Anuncio>();
+    globalThis.__PURAVENTA_ANUNCIOS__ = new Map();
   }
   return globalThis.__PURAVENTA_ANUNCIOS__!;
-}
-
-function json(data: unknown, status = 200) {
-  return NextResponse.json(data, { status });
 }
 
 // ---------- GET /api/anuncios/:id ----------
@@ -37,16 +35,17 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  const { id } = params;
-
   const store = getStore();
-  const anuncio = store.get(id);
+  const anuncio = store.get(params.id);
 
   if (!anuncio) {
-    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
+    return NextResponse.json(
+      { ok: false, error: "No encontrado" },
+      { status: 404 }
+    );
   }
 
-  return json({ ok: true, anuncio });
+  return NextResponse.json({ ok: true, anuncio });
 }
 
 // ---------- PUT /api/anuncios/:id ----------
@@ -54,31 +53,27 @@ export async function PUT(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const { id } = params;
-
-  let body: Partial<Anuncio>;
-  try {
-    body = (await req.json()) as Partial<Anuncio>;
-  } catch {
-    return json({ ok: false, error: "Body JSON inválido" }, 400);
-  }
-
   const store = getStore();
-  const existing = store.get(id);
+  const anuncio = store.get(params.id);
 
-  if (!existing) {
-    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
+  if (!anuncio) {
+    return NextResponse.json(
+      { ok: false, error: "No encontrado" },
+      { status: 404 }
+    );
   }
 
-  const updated: Anuncio = {
-    ...existing,
+  const body = await req.json().catch(() => ({}));
+
+  const actualizado: Anuncio = {
+    ...anuncio,
     ...body,
-    id, // nunca cambies el id
-    updatedAt: new Date().toISOString(),
+    id: params.id,
   };
 
-  store.set(id, updated);
-  return json({ ok: true, anuncio: updated });
+  store.set(params.id, actualizado);
+
+  return NextResponse.json({ ok: true, anuncio: actualizado });
 }
 
 // ---------- DELETE /api/anuncios/:id ----------
@@ -86,14 +81,15 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  const { id } = params;
-
   const store = getStore();
-  const existed = store.delete(id);
+  const ok = store.delete(params.id);
 
-  if (!existed) {
-    return json({ ok: false, error: "Anuncio no encontrado", id }, 404);
+  if (!ok) {
+    return NextResponse.json(
+      { ok: false, error: "No encontrado" },
+      { status: 404 }
+    );
   }
 
-  return json({ ok: true, deleted: true, id });
+  return NextResponse.json({ ok: true, deleted: true });
 }

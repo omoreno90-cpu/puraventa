@@ -1,79 +1,70 @@
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 import { NextResponse } from "next/server";
-import { put, list } from "@vercel/blob";
 
-const DB_KEY = "puraventa/anuncios.json";
+/**
+ * API base de anuncios
+ * GET  -> listar anuncios
+ * POST -> crear anuncio
+ */
 
-async function readAll(): Promise<any[]> {
-  const items = await list({ prefix: DB_KEY, limit: 10 });
+// store en memoria (temporal, pero compila y funciona)
+type Anuncio = {
+  id: string;
+  titulo?: string;
+  descripcion?: string;
+  precio?: number;
+  provincia?: string;
+  ciudad?: string;
+  whatsapp?: string;
+  createdAt: string;
+};
 
-  // Si no existe todavía, lista vacía
-  const exact = items.blobs.find((b) => b.pathname === DB_KEY);
-  if (!exact) return [];
+declare global {
+  // eslint-disable-next-line no-var
+  var __PURAVENTA_ANUNCIOS__: Map<string, Anuncio> | undefined;
+}
 
-  const res = await fetch(exact.url, { cache: "no-store" });
-  const text = await res.text();
-  try {
-    const json = JSON.parse(text);
-    return Array.isArray(json) ? json : [];
-  } catch {
-    return [];
+function getStore(): Map<string, Anuncio> {
+  if (!globalThis.__PURAVENTA_ANUNCIOS__) {
+    globalThis.__PURAVENTA_ANUNCIOS__ = new Map();
   }
+  return globalThis.__PURAVENTA_ANUNCIOS__!;
 }
 
-async function writeAll(all: any[]) {
-  await put(DB_KEY, JSON.stringify(all, null, 2), {
-    access: "private",
-    contentType: "application/json",
-    addRandomSuffix: false as any, // por compatibilidad
-  });
-}
-
+// ---------- GET /api/anuncios ----------
 export async function GET() {
-  try {
-    const all = await readAll();
-    return NextResponse.json(all, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "No se pudo leer anuncios", detalle: String(e?.message || e) },
-      { status: 500 }
-    );
-  }
+  const store = getStore();
+  const anuncios = Array.from(store.values());
+  return NextResponse.json({ ok: true, anuncios });
 }
 
+// ---------- POST /api/anuncios ----------
 export async function POST(req: Request) {
+  let body: Partial<Anuncio>;
+
   try {
-    const body = await req.json();
-
-    const nuevo = {
-      id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
-      titulo: String(body.titulo || "").trim(),
-      precio: Number(body.precio || 0),
-      provincia: String(body.provincia || "").trim(),
-      canton: String(body.canton || "").trim(),
-      categoria: String(body.categoria || "").trim(),
-      descripcion: String(body.descripcion || "").trim(),
-      whatsapp: String(body.whatsapp || "").trim(),
-      fotos: Array.isArray(body.fotos) ? body.fotos : [],
-      creadoEn: body.creadoEn ? String(body.creadoEn) : new Date().toISOString(),
-      ownerToken: String(body.ownerToken || ""),
-    };
-
-    if (!nuevo.titulo || !nuevo.provincia || !nuevo.canton || !nuevo.categoria || !nuevo.descripcion || !nuevo.whatsapp) {
-      return NextResponse.json({ error: "Faltan campos" }, { status: 400 });
-    }
-
-    const all = await readAll();
-    all.unshift(nuevo);
-    await writeAll(all);
-
-    return NextResponse.json({ ok: true, anuncio: nuevo }, { status: 200 });
-  } catch (e: any) {
+    body = await req.json();
+  } catch {
     return NextResponse.json(
-      { error: "No se pudo publicar en el servidor.", detalle: String(e?.message || e) },
-      { status: 500 }
+      { ok: false, error: "JSON inválido" },
+      { status: 400 }
     );
   }
+
+  const id = crypto.randomUUID();
+
+  const anuncio: Anuncio = {
+    id,
+    titulo: body.titulo ?? "",
+    descripcion: body.descripcion ?? "",
+    precio: body.precio,
+    provincia: body.provincia,
+    ciudad: body.ciudad,
+    whatsapp: body.whatsapp,
+    createdAt: new Date().toISOString(),
+  };
+
+  const store = getStore();
+  store.set(id, anuncio);
+
+  return NextResponse.json({ ok: true, anuncio });
 }
