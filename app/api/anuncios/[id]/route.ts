@@ -1,12 +1,5 @@
 import { NextResponse } from "next/server";
 
-/**
- * API por anuncio individual
- * GET    -> obtener anuncio
- * PUT    -> actualizar anuncio
- * DELETE -> borrar anuncio
- */
-
 type Anuncio = {
   id: string;
   titulo?: string;
@@ -14,9 +7,15 @@ type Anuncio = {
   precio?: number;
   provincia?: string;
   ciudad?: string;
+  telefono?: string;
   whatsapp?: string;
+  fotos?: string[];
   createdAt: string;
+  updatedAt?: string;
 };
+
+type Params = { id: string };
+type Ctx = { params: Params | Promise<Params> };
 
 declare global {
   // eslint-disable-next-line no-var
@@ -25,22 +24,25 @@ declare global {
 
 function getStore(): Map<string, Anuncio> {
   if (!globalThis.__PURAVENTA_ANUNCIOS__) {
-    globalThis.__PURAVENTA_ANUNCIOS__ = new Map();
+    globalThis.__PURAVENTA_ANUNCIOS__ = new Map<string, Anuncio>();
   }
   return globalThis.__PURAVENTA_ANUNCIOS__!;
 }
 
-// ---------- GET /api/anuncios/:id ----------
-export async function GET(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
+async function getId(ctx: Ctx): Promise<string> {
+  const p = await Promise.resolve(ctx.params);
+  return p.id;
+}
+
+export async function GET(_req: Request, ctx: Ctx) {
+  const id = await getId(ctx);
+
   const store = getStore();
-  const anuncio = store.get(params.id);
+  const anuncio = store.get(id);
 
   if (!anuncio) {
     return NextResponse.json(
-      { ok: false, error: "No encontrado" },
+      { ok: false, error: "Anuncio no encontrado", id },
       { status: 404 }
     );
   }
@@ -48,48 +50,45 @@ export async function GET(
   return NextResponse.json({ ok: true, anuncio });
 }
 
-// ---------- PUT /api/anuncios/:id ----------
-export async function PUT(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function PUT(req: Request, ctx: Ctx) {
+  const id = await getId(ctx);
+
   const store = getStore();
-  const anuncio = store.get(params.id);
+  const anuncio = store.get(id);
 
   if (!anuncio) {
     return NextResponse.json(
-      { ok: false, error: "No encontrado" },
+      { ok: false, error: "Anuncio no encontrado", id },
       { status: 404 }
     );
   }
 
-  const body = await req.json().catch(() => ({}));
+  const body = (await req.json().catch(() => ({}))) as Partial<Anuncio>;
 
   const actualizado: Anuncio = {
     ...anuncio,
     ...body,
-    id: params.id,
+    id,
+    updatedAt: new Date().toISOString(),
   };
 
-  store.set(params.id, actualizado);
-
+  store.set(id, actualizado);
   return NextResponse.json({ ok: true, anuncio: actualizado });
 }
 
-// ---------- DELETE /api/anuncios/:id ----------
-export async function DELETE(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(_req: Request, ctx: Ctx) {
+  const id = await getId(ctx);
+
   const store = getStore();
-  const ok = store.delete(params.id);
+  const ok = store.delete(id);
 
   if (!ok) {
     return NextResponse.json(
-      { ok: false, error: "No encontrado" },
+      { ok: false, error: "Anuncio no encontrado", id },
       { status: 404 }
     );
   }
 
-  return NextResponse.json({ ok: true, deleted: true });
+  return NextResponse.json({ ok: true, deleted: true, id });
 }
+
