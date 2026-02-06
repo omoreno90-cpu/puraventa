@@ -16,14 +16,12 @@ export type Anuncio = {
 };
 
 const IDS_KEY = "anuncios:ids";
-const key = (id: string) => `anuncio:${id}`;
+const anuncioKey = (id: string) => `anuncio:${id}`;
 
 function getRedis(): Redis | null {
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
-
   if (!url || !token) return null;
-
   return new Redis({ url, token });
 }
 
@@ -55,11 +53,13 @@ export async function listAnuncios(): Promise<Anuncio[]> {
     return mem.ids.map((id) => mem.map.get(id)).filter(Boolean) as Anuncio[];
   }
 
-  const ids = (await redis.lrange<string[]>(IDS_KEY, 0, -1)) ?? [];
-  if (ids.length === 0) return [];
+  const ids = (await redis.lrange(IDS_KEY, 0, -1)) as unknown as string[];
+  if (!ids || ids.length === 0) return [];
 
-  const anuncios = (await redis.mget<(Anuncio | null)[]>(...ids.map(key))) ?? [];
-  return anuncios.filter(Boolean) as Anuncio[];
+  // mget devuelve (T | null)[] y acepta ...keys: string[]
+  const keys = ids.map(anuncioKey);
+  const anuncios = (await redis.mget<Anuncio[]>(...keys)) as unknown as (Anuncio | null)[];
+  return anuncios.filter((x): x is Anuncio => Boolean(x));
 }
 
 export async function getAnuncio(id: string): Promise<Anuncio | null> {
@@ -70,7 +70,7 @@ export async function getAnuncio(id: string): Promise<Anuncio | null> {
     return mem.map.get(id) ?? null;
   }
 
-  return (await redis.get<Anuncio>(key(id))) ?? null;
+  return ((await redis.get(anuncioKey(id))) as unknown as Anuncio | null) ?? null;
 }
 
 export async function createAnuncio(input: Omit<Anuncio, "id" | "createdAt" | "updatedAt">): Promise<Anuncio> {
@@ -90,7 +90,7 @@ export async function createAnuncio(input: Omit<Anuncio, "id" | "createdAt" | "u
     return anuncio;
   }
 
-  await redis.set(key(id), anuncio);
+  await redis.set(anuncioKey(id), anuncio);
   await redis.lpush(IDS_KEY, id);
   return anuncio;
 }
@@ -115,7 +115,7 @@ export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promis
     return next;
   }
 
-  await redis.set(key(id), next);
+  await redis.set(anuncioKey(id), next);
   return next;
 }
 
@@ -129,10 +129,10 @@ export async function deleteAnuncio(id: string): Promise<boolean> {
     return existed;
   }
 
-  const existed = await redis.del(key(id));
+  const existed = await redis.del(anuncioKey(id));
 
-  const ids = (await redis.lrange<string[]>(IDS_KEY, 0, -1)) ?? [];
-  if (ids.includes(id)) {
+  const ids = (await redis.lrange(IDS_KEY, 0, -1)) as unknown as string[];
+  if (ids && ids.includes(id)) {
     await redis.del(IDS_KEY);
     const remaining = ids.filter((x) => x !== id);
     if (remaining.length) await redis.rpush(IDS_KEY, ...remaining);
