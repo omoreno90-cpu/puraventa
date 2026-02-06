@@ -1,6 +1,8 @@
 // app/page.tsx
 export const dynamic = "force-dynamic";
 
+import { headers } from "next/headers";
+
 type Anuncio = {
   id: string;
   titulo?: string;
@@ -15,20 +17,30 @@ type Anuncio = {
   updatedAt?: string;
 };
 
-async function getAnuncios(): Promise<Anuncio[]> {
-  const base =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+async function getAnuncios(): Promise<{ anuncios: Anuncio[]; debug?: string }> {
+  try {
+    const h = await headers();
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+    const proto = h.get("x-forwarded-proto") ?? "https";
 
-  const res = await fetch(`${base}/api/anuncios`, { cache: "no-store" });
-  if (!res.ok) return [];
+    if (!host) return { anuncios: [], debug: "No host header" };
 
-  const data = (await res.json()) as { ok: boolean; anuncios?: Anuncio[] };
-  return data.anuncios ?? [];
+    const url = `${proto}://${host}/api/anuncios`;
+    const res = await fetch(url, { cache: "no-store" });
+
+    if (!res.ok) {
+      return { anuncios: [], debug: `Fetch failed: ${res.status} ${res.statusText} (${url})` };
+    }
+
+    const data = (await res.json()) as { ok: boolean; anuncios?: Anuncio[] };
+    return { anuncios: data.anuncios ?? [], debug: `OK (${url})` };
+  } catch (e: any) {
+    return { anuncios: [], debug: `Exception: ${e?.message ?? String(e)}` };
+  }
 }
 
 export default async function HomePage() {
-  const anuncios = await getAnuncios();
+  const { anuncios, debug } = await getAnuncios();
 
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: 16 }}>
@@ -38,7 +50,13 @@ export default async function HomePage() {
           <p style={{ margin: "6px 0 0", opacity: 0.75 }}>
             Anuncios: <b>{anuncios.length}</b>
           </p>
+          {debug && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, opacity: 0.55 }}>
+              {debug}
+            </p>
+          )}
         </div>
+
         <a
           href="/publicar"
           style={{
