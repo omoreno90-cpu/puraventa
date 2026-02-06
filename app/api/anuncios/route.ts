@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { getAnunciosStore, type Anuncio } from "@/lib/anunciosStore";
+import { createAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
 
 export async function GET() {
-  const store = getAnunciosStore();
-  const anuncios = Array.from(store.values());
+  const anuncios = await listAnuncios();
   return NextResponse.json({ ok: true, anuncios });
 }
 
@@ -15,10 +14,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "JSON inválido" }, { status: 400 });
   }
 
-  const id = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
-
-  const anuncio: Anuncio = {
-    id,
+  const anuncio = await createAnuncio({
     titulo: body.titulo ?? "",
     descripcion: body.descripcion ?? "",
     precio: body.precio,
@@ -27,11 +23,7 @@ export async function POST(req: Request) {
     telefono: body.telefono,
     whatsapp: body.whatsapp,
     fotos: body.fotos ?? [],
-    createdAt: new Date().toISOString(),
-  };
-
-  const store = getAnunciosStore();
-  store.set(id, anuncio);
+  });
 
   return NextResponse.json({ ok: true, anuncio });
 }
