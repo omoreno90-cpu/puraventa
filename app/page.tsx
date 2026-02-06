@@ -152,19 +152,23 @@ export default function HomePage() {
     return CANTONES[prov] ?? [];
   }, [prov]);
 
-  // ✅ NUEVO: anuncios desde servidor
+  // ✅ anuncios desde servidor
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [cargando, setCargando] = useState(true);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
+  // ✅ FIX: el API devuelve { ok: true, anuncios: [...] }
   async function cargarAnuncios() {
     setCargando(true);
     setErrorCarga(null);
     try {
       const res = await fetch("/api/anuncios", { cache: "no-store" });
       if (!res.ok) throw new Error("No se pudo cargar anuncios.");
-      const data = (await res.json()) as Anuncio[];
-      setAnuncios(Array.isArray(data) ? data : []);
+
+      const json = (await res.json()) as { ok?: boolean; anuncios?: Anuncio[] };
+      const arr = Array.isArray(json?.anuncios) ? json.anuncios : [];
+
+      setAnuncios(arr);
     } catch (e: any) {
       setErrorCarga(e?.message || "Error cargando anuncios.");
       setAnuncios([]);
@@ -183,7 +187,8 @@ export default function HomePage() {
     return anuncios
       .filter((a) => {
         const provA = (a.provincia || "").trim();
-        const cantonA = (a.canton || "").trim();
+        // en tu UI antigua usabas canton; en API nueva se llama ciudad
+        const cantonA = ((a as any).canton || (a as any).ciudad || "").trim();
 
         // provincia
         if (prov === "GAM") {
@@ -197,22 +202,27 @@ export default function HomePage() {
           if (cantonA !== ubicacion) return false;
         }
 
-        // categoría
-        if (cat !== "Todas" && a.categoria !== cat) return false;
+        // categoría (si existe en tu tipo antiguo)
+        if (cat !== "Todas" && (a as any).categoria && (a as any).categoria !== cat) return false;
 
         // búsqueda por palabra
         if (nq) {
           const hay =
-            norm(a.titulo).includes(nq) ||
-            norm(a.descripcion).includes(nq) ||
-            norm(a.canton).includes(nq) ||
-            norm(a.provincia).includes(nq);
+            norm((a as any).titulo || "").includes(nq) ||
+            norm((a as any).descripcion || "").includes(nq) ||
+            norm(cantonA).includes(nq) ||
+            norm((a as any).provincia || "").includes(nq);
           if (!hay) return false;
         }
 
         return true;
       })
-      .sort((x, y) => String(y.creadoEn).localeCompare(String(x.creadoEn)));
+      .sort((x: any, y: any) => {
+        // API nueva: createdAt. UI vieja: creadoEn.
+        const a = String(y?.createdAt ?? y?.creadoEn ?? "");
+        const b = String(x?.createdAt ?? x?.creadoEn ?? "");
+        return a.localeCompare(b);
+      });
   }, [anuncios, q, prov, cat, ubicacion]);
 
   const total = filtrados.length;
@@ -467,7 +477,7 @@ export default function HomePage() {
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
               {filtrados.map((a) => (
-                <AnuncioCard key={a.id} anuncio={a} mounted={mounted} onOpen={() => router.push(`/anuncio/${a.id}`)} />
+                <AnuncioCard key={(a as any).id} anuncio={a as any} mounted={mounted} onOpen={() => router.push(`/anuncio/${(a as any).id}`)} />
               ))}
             </div>
           )}
@@ -492,13 +502,14 @@ function AnuncioCard({
   onOpen,
   mounted,
 }: {
-  anuncio: Anuncio;
+  anuncio: any;
   onOpen: () => void;
   mounted: boolean;
 }) {
   const foto = anuncio.fotos?.[0] || "";
 
-  const days = mounted ? diasDesde(anuncio.creadoEn) : null;
+  const iso = anuncio.createdAt ?? anuncio.creadoEn;
+  const days = mounted ? diasDesde(iso) : null;
   const label =
     !mounted || days === null ? "" : days === 0 ? "Hoy" : `Hace ${clamp(days, 1, 999)} día${days === 1 ? "" : "s"}`;
 
@@ -561,12 +572,14 @@ function AnuncioCard({
       </div>
 
       <div style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>{anuncio.titulo}</div>
+        <div style={{ fontWeight: 700, color: COLORS.text, marginBottom: 6, lineHeight: 1.2 }}>
+          {anuncio.titulo}
+        </div>
         <div style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
-          {anuncio.canton}, {anuncio.provincia}
+          {(anuncio.canton ?? anuncio.ciudad ?? "—")}, {anuncio.provincia}
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: COLORS.muted }}>
-          Publicado: {mounted ? formatFechaISO(anuncio.creadoEn) : "—"}
+          Publicado: {mounted ? formatFechaISO(iso) : "—"}
         </div>
       </div>
     </div>
