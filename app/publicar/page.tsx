@@ -1,5 +1,4 @@
-﻿// app/publicar/page.tsx
-"use client";
+﻿"use client";
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
@@ -19,7 +18,6 @@ const COLORS = {
   subtext: "#64748B",
   muted: "#94A3B8",
   danger: "#DC2626",
-  success: "#16A34A",
 };
 
 const CATEGORIAS = [
@@ -35,16 +33,20 @@ const CATEGORIAS = [
 
 type Categoria = (typeof CATEGORIAS)[number];
 
-const SUBCATEGORIAS: Record<string, string[]> = {
-  Tecnología: ["Celulares", "Computadoras", "TV y audio", "Videojuegos", "Cámaras", "Accesorios"],
-  Muebles: ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior", "Otros"],
-  Electrodomésticos: ["Cocina", "Lavado", "Refrigeración", "Clima", "Otros"],
-  "Motos y vehículos": ["Autos", "Motos", "Repuestos", "Accesorios", "Otros"],
-  "Deportes & outdoor": ["Gimnasio", "Bicicletas", "Camping / aventura", "Deportes varios", "Otros"],
-  Hogar: ["Decoración", "Iluminación", "Cocina y menaje", "Organización", "Limpieza", "Otros"],
-  "Alquiler de casas y apartamentos": ["Casa", "Apartamento", "Habitación", "Otros"],
-  Otros: ["Otros"],
-};
+const MESES = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+] as const;
 
 function inputStyle(): React.CSSProperties {
   return {
@@ -112,19 +114,12 @@ async function uploadToCloudinary(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
 
-  const res = await fetch("/api/upload", {
-    method: "POST",
-    body: fd,
-  });
-
+  const res = await fetch("/api/upload", { method: "POST", body: fd });
   const data = await res.json().catch(() => ({}));
 
-  if (!res.ok) {
-    const msg = data?.error || "Error subiendo foto";
-    throw new Error(msg);
-  }
-
+  if (!res.ok) throw new Error(data?.error || "Error subiendo foto");
   if (!data?.url) throw new Error("Upload sin URL");
+
   return String(data.url);
 }
 
@@ -137,8 +132,16 @@ export default function PublicarPage() {
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
   const [subcategoria, setSubcategoria] = useState<string>("");
+
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
+
+  // ✅ Vehículos
+  const [vehiculoAno, setVehiculoAno] = useState<string>("");
+  const [marchamoAlDia, setMarchamoAlDia] = useState<boolean>(true);
+  const [dekraAlDia, setDekraAlDia] = useState<boolean>(true);
+  const [dekraMes, setDekraMes] = useState<(typeof MESES)[number]>("Enero");
+
   const [files, setFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -214,6 +217,23 @@ export default function PublicarPage() {
         return;
       }
 
+      // ✅ Validación vehículos
+      const esVehiculos = categoria === "Motos y vehículos";
+      let anoNum: number | undefined = undefined;
+
+      if (esVehiculos) {
+        anoNum = Number(vehiculoAno);
+        if (!Number.isFinite(anoNum) || anoNum < 1950 || anoNum > new Date().getFullYear() + 1) {
+          setError("Año del vehículo inválido.");
+          return;
+        }
+        if (!dekraMes) {
+          setError("Selecciona el mes de DEKRA.");
+          return;
+        }
+      }
+
+      // 1) subir fotos
       let fotos: string[] = [];
       if (files.length > 0) {
         fotos = [];
@@ -223,17 +243,25 @@ export default function PublicarPage() {
         }
       }
 
-      const payload = {
+      // 2) guardar anuncio en el server (Redis)
+      const payload: any = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
         canton,
         categoria,
-        subcategoria: subcategoria || undefined,
+        subcategoria: subcategoria.trim() || undefined,
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
       };
+
+      if (esVehiculos) {
+        payload.vehiculoAno = anoNum;
+        payload.marchamoAlDia = marchamoAlDia;
+        payload.dekraAlDia = dekraAlDia;
+        payload.dekraMes = dekraMes;
+      }
 
       const res = await fetch("/api/anuncios", {
         method: "POST",
@@ -242,9 +270,7 @@ export default function PublicarPage() {
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || "Error guardando anuncio");
-      }
+      if (!res.ok) throw new Error(data?.error || "Error guardando anuncio");
 
       router.push("/");
     } catch (err: any) {
@@ -255,7 +281,7 @@ export default function PublicarPage() {
   }
 
   const esAlquiler = categoria === "Alquiler de casas y apartamentos";
-  const subs = SUBCATEGORIAS[categoria] ?? null;
+  const esVehiculos = categoria === "Motos y vehículos";
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -297,10 +323,10 @@ export default function PublicarPage() {
             }}
           >
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={chipStyle()}>⌧ No animales</span>
-              <span style={chipStyle()}>⌧ No sexo</span>
-              <span style={chipStyle()}>⌧ No estafas</span>
-              <span style={chipStyle()}>⌧ Ilegal/armas/drogas</span>
+              <span style={chipStyle()}>⛔ No animales</span>
+              <span style={chipStyle()}>⛔ No sexo</span>
+              <span style={chipStyle()}>⛔ No estafas</span>
+              <span style={chipStyle()}>⛔ Ilegal/armas/drogas</span>
             </div>
             <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 900, textDecoration: "none" }}>
               Ver normas →
@@ -348,8 +374,9 @@ export default function PublicarPage() {
               style={selectStyle()}
               value={categoria}
               onChange={(e) => {
-                const cat = e.target.value as Categoria;
-                setCategoria(cat);
+                const next = e.target.value as Categoria;
+                setCategoria(next);
+                // reset subcat / vehiculos
                 setSubcategoria("");
               }}
             >
@@ -360,15 +387,51 @@ export default function PublicarPage() {
               ))}
             </select>
 
-            {subs && (
-              <select style={selectStyle()} value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)}>
-                <option value="">Subcategoría (opcional)</option>
-                {subs.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+            <input
+              style={inputStyle()}
+              placeholder="Subcategoría (opcional) — ej: Motos, Coches, Repuestos…"
+              value={subcategoria}
+              onChange={(e) => setSubcategoria(e.target.value)}
+            />
+
+            {esVehiculos && (
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
+                <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 10 }}>Datos del vehículo</div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <input
+                    style={inputStyle()}
+                    placeholder="Año del vehículo (obligatorio)"
+                    value={vehiculoAno}
+                    onChange={(e) => setVehiculoAno(e.target.value)}
+                    inputMode="numeric"
+                  />
+
+                  <select style={selectStyle()} value={dekraMes} onChange={(e) => setDekraMes(e.target.value as any)}>
+                    {MESES.map((m) => (
+                      <option key={m} value={m}>
+                        Mes DEKRA: {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                  <select style={selectStyle()} value={marchamoAlDia ? "si" : "no"} onChange={(e) => setMarchamoAlDia(e.target.value === "si")}>
+                    <option value="si">Marchamo al día: Sí</option>
+                    <option value="no">Marchamo al día: No</option>
+                  </select>
+
+                  <select style={selectStyle()} value={dekraAlDia ? "si" : "no"} onChange={(e) => setDekraAlDia(e.target.value === "si")}>
+                    <option value="si">DEKRA al día: Sí</option>
+                    <option value="no">DEKRA al día: No</option>
+                  </select>
+                </div>
+
+                <div style={{ marginTop: 10, fontSize: 12, color: COLORS.subtext, fontWeight: 650 }}>
+                  Esto ayuda a filtrar y da confianza (y evita preguntas repetidas).
+                </div>
+              </div>
             )}
 
             {esAlquiler && (
@@ -403,21 +466,12 @@ export default function PublicarPage() {
 
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 900, color: COLORS.text }}>Fotos (máx. 5)</div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
-                Se subirán automáticamente.
-              </div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>Se subirán automáticamente.</div>
 
               <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
 
               {previewUrls.length > 0 && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
-                    gap: 10,
-                  }}
-                >
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
                   {previewUrls.map((src, i) => (
                     <div
                       key={i}

@@ -1,30 +1,18 @@
-﻿// app/api/anuncios/route.ts
-import { NextResponse } from "next/server";
-import { addAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
-import { nanoid } from "nanoid";
+﻿import { NextResponse } from "next/server";
+import { addAnuncio, listAnuncios, type Anuncio, MESES_DEKRA } from "@/lib/anunciosStore";
 
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
-const MESES = [
-  "Enero",
-  "Febrero",
-  "Marzo",
-  "Abril",
-  "Mayo",
-  "Junio",
-  "Julio",
-  "Agosto",
-  "Septiembre",
-  "Octubre",
-  "Noviembre",
-  "Diciembre",
-] as const;
+function uuid() {
+  // suficiente para MVP
+  return crypto.randomUUID();
+}
 
 export async function GET() {
   try {
-    const anuncios = await listAnuncios(200);
+    const anuncios = await listAnuncios();
     return json({ ok: true, anuncios });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
@@ -35,75 +23,76 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
-    const titulo = String(body?.titulo ?? "").trim();
-    const descripcion = String(body?.descripcion ?? "").trim();
+    const titulo = String(body.titulo ?? "").trim();
+    const descripcion = String(body.descripcion ?? "").trim();
 
-    const precio = Number(body?.precio);
-    const provincia = String(body?.provincia ?? "").trim();
-    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim(); // compat
-    const whatsapp = String(body?.whatsapp ?? "").replace(/\D/g, "").trim();
+    const precioNum = Number(body.precio);
+    const provincia = String(body.provincia ?? "").trim();
+    const canton = String(body.canton ?? body.ciudad ?? "").trim();
+    const whatsapp = String(body.whatsapp ?? "").replace(/\D/g, "");
+    const fotos = Array.isArray(body.fotos) ? body.fotos.map(String) : [];
 
-    // ✅ AQUÍ el fix: siempre string
-    const categoria = String(body?.categoria ?? "Otros").trim() || "Otros";
-    const subcategoria = String(body?.subcategoria ?? "").trim() || undefined;
+    const categoria = String(body.categoria ?? "").trim();
+    const subcategoria = String(body.subcategoria ?? "").trim() || undefined;
 
-    const fotos = Array.isArray(body?.fotos) ? body.fotos.map(String) : [];
+    if (titulo.length < 5) return json({ ok: false, error: "Título demasiado corto." }, 400);
+    if (descripcion.length < 10) return json({ ok: false, error: "Descripción demasiado corta." }, 400);
+    if (!Number.isFinite(precioNum) || precioNum <= 0) return json({ ok: false, error: "Precio inválido." }, 400);
+    if (!provincia) return json({ ok: false, error: "Provincia obligatoria." }, 400);
+    if (!canton) return json({ ok: false, error: "Cantón/ciudad obligatoria." }, 400);
+    if (whatsapp.length < 8) return json({ ok: false, error: "WhatsApp inválido." }, 400);
+    if (!categoria) return json({ ok: false, error: "Categoría obligatoria." }, 400);
 
-    // Vehículos
-    const anoVehiculoRaw = body?.anoVehiculo;
-    const anoVehiculo =
-      anoVehiculoRaw === undefined || anoVehiculoRaw === null || anoVehiculoRaw === ""
-        ? undefined
-        : Number(anoVehiculoRaw);
+    // ✅ Campos vehículos (solo si categoría lo es)
+    let vehiculoAno: number | undefined = undefined;
+    let marchamoAlDia: boolean | undefined = undefined;
+    let dekraAlDia: boolean | undefined = undefined;
+    let dekraMes: (typeof MESES_DEKRA)[number] | undefined = undefined;
 
-    const marchamoAlDia = body?.marchamoAlDia === true ? true : body?.marchamoAlDia === false ? false : undefined;
-    const dekraAlDia = body?.dekraAlDia === true ? true : body?.dekraAlDia === false ? false : undefined;
-
-    let dekraMes = String(body?.dekraMes ?? "").trim();
-    if (dekraMes) {
-      if (!MESES.includes(dekraMes as any)) {
-        return json({ ok: false, error: "Mes de DEKRA inválido" }, 400);
+    if (categoria === "Motos y vehículos") {
+      vehiculoAno = Number(body.vehiculoAno);
+      if (!Number.isFinite(vehiculoAno) || vehiculoAno < 1950 || vehiculoAno > new Date().getFullYear() + 1) {
+        return json({ ok: false, error: "Año del vehículo inválido." }, 400);
       }
-    } else {
-      dekraMes = "";
-    }
 
-    // Validaciones mínimas
-    if (titulo.length < 5) return json({ ok: false, error: "Título demasiado corto" }, 400);
-    if (descripcion.length < 10) return json({ ok: false, error: "Descripción demasiado corta" }, 400);
-    if (!Number.isFinite(precio) || precio <= 0) return json({ ok: false, error: "Precio inválido" }, 400);
-    if (!provincia) return json({ ok: false, error: "Provincia obligatoria" }, 400);
-    if (!ciudad) return json({ ok: false, error: "Cantón/Ciudad obligatoria" }, 400);
-    if (whatsapp.length < 8) return json({ ok: false, error: "WhatsApp inválido" }, 400);
+      marchamoAlDia = Boolean(body.marchamoAlDia);
+      dekraAlDia = Boolean(body.dekraAlDia);
 
-    if (anoVehiculo !== undefined) {
-      if (!Number.isFinite(anoVehiculo) || anoVehiculo < 1900 || anoVehiculo > new Date().getFullYear() + 1) {
-        return json({ ok: false, error: "Año de vehículo inválido" }, 400);
+      const mes = String(body.dekraMes ?? "").trim();
+      if (!MESES_DEKRA.includes(mes as any)) {
+        return json({ ok: false, error: "Mes de DEKRA inválido." }, 400);
       }
+      dekraMes = mes as any;
     }
 
     const anuncio: Anuncio = {
-      id: nanoid(),
+      id: uuid(),
       titulo,
       descripcion,
-      precio,
+      precio: precioNum,
+
       provincia,
-      ciudad,
+      canton,
+      ciudad: canton,
+
       whatsapp,
+      fotos,
+
       categoria,
       subcategoria,
-      fotos,
-      anoVehiculo,
+
+      vehiculoAno,
       marchamoAlDia,
       dekraAlDia,
-      dekraMes: dekraMes || undefined,
+      dekraMes,
+
       createdAt: new Date().toISOString(),
       updatedAt: undefined,
     };
 
     await addAnuncio(anuncio);
 
-    const anuncios = await listAnuncios(200);
+    const anuncios = await listAnuncios();
     return json({ ok: true, anuncio, anuncios });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error guardando anuncio" }, 500);
