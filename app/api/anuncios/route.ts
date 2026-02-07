@@ -1,6 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { addAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
 
+export const runtime = "nodejs";
+
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
@@ -22,10 +24,15 @@ export async function POST(req: Request) {
     const titulo = String(body?.titulo ?? "").trim();
     const descripcion = String(body?.descripcion ?? "").trim();
     const provincia = String(body?.provincia ?? "").trim();
-    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim();
-    const whatsapp = String(body?.whatsapp ?? "").trim();
-    const categoria = String(body?.categoria ?? "").trim();
-    const subcategoria = String(body?.subcategoria ?? "").trim();
+
+    // soporta ciudad o canton (compat)
+    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim() || undefined;
+    const canton = String(body?.canton ?? body?.ciudad ?? "").trim() || undefined;
+
+    const whatsapp = String(body?.whatsapp ?? "").trim() || undefined;
+    const categoria = String(body?.categoria ?? "").trim() || undefined;
+    const subcategoria = String(body?.subcategoria ?? "").trim() || undefined;
+
     const fotos = Array.isArray(body?.fotos) ? body.fotos.map(String) : [];
 
     const precioNum = Number(body?.precio);
@@ -59,15 +66,15 @@ export async function POST(req: Request) {
       precio: precioNum,
       provincia,
       ciudad,
+      canton,
       whatsapp,
       fotos,
-      categoria: categoria || undefined,
-      subcategoria: subcategoria || undefined,
-
+      categoria,
+      subcategoria,
       createdAt: new Date().toISOString(),
       updatedAt: undefined,
 
-      vehiculoAno,
+      vehiculoAno: Number.isFinite(vehiculoAno as any) ? vehiculoAno : undefined,
       marchamoAlDia,
       dekraAlDia,
       dekraMes,

@@ -20,6 +20,7 @@ type Anuncio = {
   subcategoria?: string;
   createdAt?: string;
   updatedAt?: string;
+
   // campos coches
   vehiculoAno?: number;
   marchamoAlDia?: boolean;
@@ -105,7 +106,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // extras “home”
+  // filtros home
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<string>("");
 
@@ -133,36 +134,49 @@ export default function HomePage() {
 
   const categorias = useMemo(() => {
     const s = new Set<string>();
-    for (const a of anuncios) if (a.categoria) s.add(a.categoria);
+    for (const a of anuncios) {
+      const c = (a.categoria || "").trim();
+      if (c) s.add(c);
+    }
     return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
   }, [anuncios]);
 
   const filtrados = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return anuncios.filter((a) => {
-      if (cat && (a.categoria || "") !== cat) return false;
+      const aCat = (a.categoria || "").trim();
+      if (cat && aCat !== cat) return false;
+
       if (!qq) return true;
+
+      const zona = (a.canton || a.ciudad || "").toLowerCase();
       const hay =
         (a.titulo || "").toLowerCase().includes(qq) ||
         (a.descripcion || "").toLowerCase().includes(qq) ||
         (a.subcategoria || "").toLowerCase().includes(qq) ||
         (a.categoria || "").toLowerCase().includes(qq) ||
         (a.provincia || "").toLowerCase().includes(qq) ||
-        (a.canton || a.ciudad || "").toLowerCase().includes(qq);
+        zona.includes(qq);
+
       return hay;
     });
   }, [anuncios, q, cat]);
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
-      {/* Top bar (como tu estilo) */}
-      <div
-        style={{
-          background: "white",
-          borderBottom: `1px solid ${COLORS.border}`,
-        }}
-      >
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      {/* Top bar */}
+      <div style={{ background: "white", borderBottom: `1px solid ${COLORS.border}` }}>
+        <div
+          style={{
+            maxWidth: 1100,
+            margin: "0 auto",
+            padding: "14px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div
               style={{
@@ -212,14 +226,8 @@ export default function HomePage() {
         </div>
 
         {/* Buscador + filtro */}
-        <div
-          style={{
-            marginTop: 14,
-            ...card(),
-            padding: 14,
-          }}
-        >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12 }}>
+        <div style={{ marginTop: 14, ...card(), padding: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 12 }}>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -257,7 +265,6 @@ export default function HomePage() {
 
           <div style={{ marginTop: 10, color: COLORS.subtext, fontWeight: 800, fontSize: 13 }}>
             {loading ? "Cargando…" : `${filtrados.length} anuncio(s)`}
-            {anuncios.length === 1 ? " (si solo tienes 1 en Redis, aquí verás 1)" : ""}
           </div>
         </div>
 
@@ -278,7 +285,9 @@ export default function HomePage() {
           ) : filtrados.length === 0 ? (
             <div style={{ ...card(), padding: 16 }}>
               <div style={{ fontWeight: 950, color: COLORS.text }}>No hay anuncios con esos filtros.</div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontWeight: 800 }}>Prueba a quitar la categoría o el texto.</div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontWeight: 800 }}>
+                Prueba a quitar la categoría o el texto.
+              </div>
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>

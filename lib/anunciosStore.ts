@@ -67,21 +67,60 @@ function findLegacyById(id: string): Anuncio | null {
   return a ? (a as Anuncio) : null;
 }
 
-async function ensureInRedis(a: Anuncio) {
-  const redis = getRedis();
-  const id = String(a.id);
+function normalize(a: any): Anuncio {
+  const id = String(a?.id ?? "");
+  const createdAt = String(a?.createdAt ?? a?.creadoEn ?? new Date().toISOString());
 
-  // normaliza createdAt
-  const createdAt = String((a as any).createdAt ?? (a as any).creadoEn ?? new Date().toISOString());
+  const ciudad = (a?.ciudad ?? a?.canton ?? "").toString().trim() || undefined;
+  const canton = (a?.canton ?? a?.ciudad ?? "").toString().trim() || undefined;
 
-  const normalized: Anuncio = {
-    ...a,
+  const out: Anuncio = {
     id,
+    titulo: String(a?.titulo ?? "").trim(),
+    descripcion: String(a?.descripcion ?? "").trim(),
+    precio: Number(a?.precio ?? 0),
+
+    provincia: String(a?.provincia ?? "").trim(),
+    ciudad,
+    canton,
+
+    whatsapp: a?.whatsapp ? String(a.whatsapp) : undefined,
+    fotos: Array.isArray(a?.fotos) ? a.fotos.map(String) : [],
+
+    categoria: a?.categoria ? String(a.categoria).trim() : undefined,
+    subcategoria: a?.subcategoria ? String(a.subcategoria).trim() : undefined,
+
     createdAt,
-    // compat: si venía con canton/ciudad mezclado
-    ciudad: (a as any).ciudad ?? (a as any).canton ?? a.ciudad,
-    canton: (a as any).canton ?? (a as any).ciudad ?? a.canton,
+    updatedAt: a?.updatedAt ? String(a.updatedAt) : undefined,
+
+    vehiculoAno:
+      a?.vehiculoAno === undefined || a?.vehiculoAno === null || a?.vehiculoAno === ""
+        ? undefined
+        : Number(a.vehiculoAno),
+    marchamoAlDia:
+      a?.marchamoAlDia === undefined || a?.marchamoAlDia === null || a?.marchamoAlDia === ""
+        ? undefined
+        : Boolean(a.marchamoAlDia),
+    dekraAlDia:
+      a?.dekraAlDia === undefined || a?.dekraAlDia === null || a?.dekraAlDia === ""
+        ? undefined
+        : Boolean(a.dekraAlDia),
+    dekraMes: a?.dekraMes ? String(a.dekraMes).trim() : undefined,
   };
+
+  // saneo mínimo
+  if (!Number.isFinite(out.precio)) out.precio = 0;
+  if (!Number.isFinite(out.vehiculoAno as any)) out.vehiculoAno = undefined;
+
+  return out;
+}
+
+async function ensureInRedis(a: any) {
+  const redis = getRedis();
+  const normalized = normalize(a);
+  if (!normalized.id) return;
+
+  const id = normalized.id;
 
   await redis.set(keyFor(id), normalized);
 
@@ -117,13 +156,12 @@ async function listByIds(ids: string[]): Promise<Anuncio[]> {
   const redis = getRedis();
   const keys = ids.map(keyFor);
 
-  // Upstash typings a veces son raros con mget => casteo robusto
   const raw = (await (redis as any).mget(...keys)) as unknown;
   const arr = (Array.isArray(raw) ? raw : []) as (Anuncio | null)[];
 
-  const out = arr.filter(Boolean) as Anuncio[];
+  const out = arr.filter(Boolean).map((x) => normalize(x)) as Anuncio[];
 
-  // ordena por createdAt desc si existe
+  // ordena por createdAt desc
   out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
   return out;
 }
@@ -132,15 +170,15 @@ export async function getAnuncio(id: string): Promise<Anuncio | null> {
   const redis = getRedis();
   const key = keyFor(id);
 
-  const fromRedis = (await redis.get(key)) as Anuncio | null;
-  if (fromRedis?.id) return fromRedis;
+  const fromRedis = (await redis.get(key)) as any;
+  if (fromRedis?.id) return normalize(fromRedis);
 
   // fallback legacy: si existe en data/anuncios.json, lo migramos y devolvemos
   const legacy = findLegacyById(id);
   if (legacy?.id) {
     await ensureInRedis(legacy);
-    const again = (await redis.get(key)) as Anuncio | null;
-    return again?.id ? again : null;
+    const again = (await redis.get(key)) as any;
+    return again?.id ? normalize(again) : null;
   }
 
   return null;
@@ -154,12 +192,12 @@ export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promis
   const current = await getAnuncio(id);
   if (!current) return null;
 
-  const updated: Anuncio = {
+  const updated: Anuncio = normalize({
     ...current,
     ...patch,
     id: String(current.id),
     updatedAt: new Date().toISOString(),
-  };
+  });
 
   await ensureInRedis(updated);
   return updated;
