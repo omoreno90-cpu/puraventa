@@ -34,6 +34,10 @@ const CATEGORIAS = [
 
 type Categoria = (typeof CATEGORIAS)[number];
 
+// ✅ Subcategorías SOLO para "Motos y vehículos"
+const SUBCATS_MOTOS_VEHICULOS = ["Repuestos", "Motos", "Carros", "Accesorios", "Otros"] as const;
+type SubcatMotos = (typeof SUBCATS_MOTOS_VEHICULOS)[number];
+
 function inputStyle(): React.CSSProperties {
   return {
     padding: "12px 14px",
@@ -124,6 +128,10 @@ export default function PublicarPage() {
   const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
+
+  // ✅ Subcategoría (solo se usa si categoria === "Motos y vehículos")
+  const [subcategoriaMotos, setSubcategoriaMotos] = useState<SubcatMotos>("Repuestos");
+
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -132,6 +140,14 @@ export default function PublicarPage() {
   const [publicando, setPublicando] = useState(false);
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
+
+  // ✅ cuando cambias categoría, resetea subcat a valor por defecto
+  function onChangeCategoria(next: Categoria) {
+    setCategoria(next);
+    if (next === "Motos y vehículos") {
+      setSubcategoriaMotos("Repuestos");
+    }
+  }
 
   function limpiarPreviews(next: string[]) {
     // revoca previews antiguas para no fugar memoria
@@ -214,13 +230,19 @@ export default function PublicarPage() {
         }
       }
 
-      // 2) guardar anuncio en el server (data/anuncios.json)
+      // ✅ subcategoría solo si aplica
+      const subcategoria = categoria === "Motos y vehículos" ? subcategoriaMotos : undefined;
+
+      // 2) guardar anuncio en el server (API)
       const payload = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
+        // API nueva usa "ciudad" (pero seguimos mandando canton y ciudad para compatibilidad)
         canton,
+        ciudad: canton,
         categoria,
+        subcategoria,
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
@@ -246,6 +268,7 @@ export default function PublicarPage() {
   }
 
   const esAlquiler = categoria === "Alquiler de casas y apartamentos";
+  const esMotosVehiculos = categoria === "Motos y vehículos";
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -287,10 +310,10 @@ export default function PublicarPage() {
             }}
           >
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={chipStyle()}>❌ No animales</span>
-              <span style={chipStyle()}>❌ No sexo</span>
-              <span style={chipStyle()}>❌ No estafas</span>
-              <span style={chipStyle()}>❌ Ilegal/armas/drogas</span>
+              <span style={chipStyle()}>⛔ No animales</span>
+              <span style={chipStyle()}>⛔ No sexo</span>
+              <span style={chipStyle()}>⛔ No estafas</span>
+              <span style={chipStyle()}>⛔ Ilegal/armas/drogas</span>
             </div>
             <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 900, textDecoration: "none" }}>
               Ver normas →
@@ -334,13 +357,28 @@ export default function PublicarPage() {
               </select>
             </div>
 
-            <select style={selectStyle()} value={categoria} onChange={(e) => setCategoria(e.target.value as Categoria)}>
+            <select style={selectStyle()} value={categoria} onChange={(e) => onChangeCategoria(e.target.value as Categoria)}>
               {CATEGORIAS.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
             </select>
+
+            {/* ✅ Subcategoría para Motos y vehículos */}
+            {esMotosVehiculos && (
+              <select
+                style={selectStyle()}
+                value={subcategoriaMotos}
+                onChange={(e) => setSubcategoriaMotos(e.target.value as SubcatMotos)}
+              >
+                {SUBCATS_MOTOS_VEHICULOS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
 
             {esAlquiler && (
               <div
