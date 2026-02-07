@@ -35,7 +35,21 @@ const CATEGORIAS = [
   "Otros",
 ] as const;
 
+// ✅ Subcategorías solo para "Motos y vehículos"
+const SUBCATS_MOTOS_VEHICULOS = ["Todas", "Repuestos", "Motos", "Carros", "Accesorios", "Otros"] as const;
+
 type Zona = "GAM" | (typeof PROVINCIAS)[number];
+type Subcat = (typeof SUBCATS_MOTOS_VEHICULOS)[number];
+
+// Tip ampliado para lo que viene del API
+type AnuncioAPI = Anuncio & {
+  categoria?: string;
+  subcategoria?: string;
+  ciudad?: string;
+  canton?: string;
+  createdAt?: string;
+  creadoEn?: string;
+};
 
 function formatFechaISO(iso?: string) {
   if (!iso) return "—";
@@ -139,6 +153,9 @@ export default function HomePage() {
   const [cat, setCat] = useState<(typeof CATEGORIAS)[number]>("Todas");
   const [mostrarResto, setMostrarResto] = useState(false);
 
+  // ✅ Subcategoría (solo aplica en "Motos y vehículos")
+  const [subcat, setSubcat] = useState<Subcat>("Todas");
+
   // filtro por ubicación (cantón/zona)
   const [ubicacion, setUbicacion] = useState<string>("Cualquiera");
 
@@ -147,17 +164,22 @@ export default function HomePage() {
     setUbicacion("Cualquiera");
   }, [prov]);
 
+  // cuando cambias categoría, resetea subcategoría (para evitar filtros “fantasma”)
+  useEffect(() => {
+    setSubcat("Todas");
+  }, [cat]);
+
   const ubicacionesDisponibles = useMemo(() => {
     if (prov === "GAM") return [];
     return CANTONES[prov] ?? [];
   }, [prov]);
 
-  // ✅ anuncios desde servidor
-  const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
+  // anuncios desde servidor
+  const [anuncios, setAnuncios] = useState<AnuncioAPI[]>([]);
   const [cargando, setCargando] = useState(true);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
-  // ✅ FIX: el API devuelve { ok: true, anuncios: [...] }
+  // el API devuelve { ok: true, anuncios: [...] }
   async function cargarAnuncios() {
     setCargando(true);
     setErrorCarga(null);
@@ -165,7 +187,7 @@ export default function HomePage() {
       const res = await fetch("/api/anuncios", { cache: "no-store" });
       if (!res.ok) throw new Error("No se pudo cargar anuncios.");
 
-      const json = (await res.json()) as { ok?: boolean; anuncios?: Anuncio[] };
+      const json = (await res.json()) as { ok?: boolean; anuncios?: AnuncioAPI[] };
       const arr = Array.isArray(json?.anuncios) ? json.anuncios : [];
 
       setAnuncios(arr);
@@ -187,7 +209,6 @@ export default function HomePage() {
     return anuncios
       .filter((a) => {
         const provA = (a.provincia || "").trim();
-        // en tu UI antigua usabas canton; en API nueva se llama ciudad
         const cantonA = ((a as any).canton || (a as any).ciudad || "").trim();
 
         // provincia
@@ -202,8 +223,19 @@ export default function HomePage() {
           if (cantonA !== ubicacion) return false;
         }
 
-        // categoría (si existe en tu tipo antiguo)
-        if (cat !== "Todas" && (a as any).categoria && (a as any).categoria !== cat) return false;
+        // categoría
+        const catA = String((a as any).categoria || "").trim();
+        if (cat !== "Todas") {
+          if (!catA) return false;
+          if (catA !== cat) return false;
+        }
+
+        // ✅ subcategoría (solo si cat === "Motos y vehículos")
+        const subA = String((a as any).subcategoria || "").trim();
+        if (cat === "Motos y vehículos" && subcat !== "Todas") {
+          if (!subA) return false;
+          if (subA !== subcat) return false;
+        }
 
         // búsqueda por palabra
         if (nq) {
@@ -211,19 +243,20 @@ export default function HomePage() {
             norm((a as any).titulo || "").includes(nq) ||
             norm((a as any).descripcion || "").includes(nq) ||
             norm(cantonA).includes(nq) ||
-            norm((a as any).provincia || "").includes(nq);
+            norm((a as any).provincia || "").includes(nq) ||
+            norm(catA).includes(nq) ||
+            norm(subA).includes(nq);
           if (!hay) return false;
         }
 
         return true;
       })
       .sort((x: any, y: any) => {
-        // API nueva: createdAt. UI vieja: creadoEn.
         const a = String(y?.createdAt ?? y?.creadoEn ?? "");
         const b = String(x?.createdAt ?? x?.creadoEn ?? "");
         return a.localeCompare(b);
       });
-  }, [anuncios, q, prov, cat, ubicacion]);
+  }, [anuncios, q, prov, cat, ubicacion, subcat]);
 
   const total = filtrados.length;
 
@@ -336,6 +369,28 @@ export default function HomePage() {
               ))}
             </select>
 
+            {/* ✅ Subcategoría solo cuando aplica */}
+            {cat === "Motos y vehículos" && (
+              <select
+                value={subcat}
+                onChange={(e) => setSubcat(e.target.value as Subcat)}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 14,
+                  border: `1px solid ${COLORS.border}`,
+                  background: COLORS.card,
+                  fontWeight: 700,
+                  color: COLORS.text,
+                }}
+              >
+                {SUBCATS_MOTOS_VEHICULOS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <button onClick={() => router.push("/publicar")} style={primaryBtn()}>
               Publicar anuncio
             </button>
@@ -365,6 +420,7 @@ export default function HomePage() {
                 onClick={() => {
                   setQ("");
                   setCat("Todas");
+                  setSubcat("Todas");
                   setProv("GAM");
                   setMostrarResto(false);
                   setUbicacion("Cualquiera");
@@ -441,6 +497,7 @@ export default function HomePage() {
           </div>
           <div style={{ fontSize: 12, color: "#667085" }}>
             Mostrando: <b>{prov}</b> · <b>{cat}</b>
+            {cat === "Motos y vehículos" && subcat !== "Todas" ? ` · ${subcat}` : ""}
             {prov !== "GAM" && ubicacion !== "Cualquiera" ? ` · ${ubicacion}` : ""}
             {q.trim() ? ` · búsqueda: "${q.trim()}"` : ""}
           </div>
@@ -476,8 +533,13 @@ export default function HomePage() {
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
-              {filtrados.map((a) => (
-                <AnuncioCard key={(a as any).id} anuncio={a as any} mounted={mounted} onOpen={() => router.push(`/anuncio/${(a as any).id}`)} />
+              {filtrados.map((a: any) => (
+                <AnuncioCard
+                  key={a.id}
+                  anuncio={a}
+                  mounted={mounted}
+                  onOpen={() => router.push(`/anuncio/${a.id}`)}
+                />
               ))}
             </div>
           )}
@@ -578,6 +640,14 @@ function AnuncioCard({
         <div style={{ fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
           {(anuncio.canton ?? anuncio.ciudad ?? "—")}, {anuncio.provincia}
         </div>
+
+        {/* Subcat visible solo si existe */}
+        {anuncio.categoria === "Motos y vehículos" && anuncio.subcategoria ? (
+          <div style={{ marginTop: 6, fontSize: 12, color: "#64748B", fontWeight: 700 }}>
+            {anuncio.subcategoria}
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 8, fontSize: 12, color: COLORS.muted }}>
           Publicado: {mounted ? formatFechaISO(iso) : "—"}
         </div>
