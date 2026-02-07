@@ -156,7 +156,12 @@ export default function EditarPage() {
       setCanton(city);
 
       setCategoria((a?.categoria as any) || "Muebles");
-      setSubcategoria(String(a?.subcategoria ?? SUBCATEGORIAS[(a?.categoria as any) || "Muebles"]?.[0] || "Otros"));
+setSubcategoria(
+  String(
+    a?.subcategoria ??
+      (SUBCATEGORIAS[((a?.categoria as any) || "Muebles")]?.[0] || "Otros")
+  )
+);
       setDescripcion(String(a?.descripcion ?? ""));
       setWhatsapp(String(a?.whatsapp ?? ""));
     } catch (e: any) {
