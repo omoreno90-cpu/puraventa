@@ -1,4 +1,3 @@
-// lib/anunciosStore.ts
 import { Redis } from "@upstash/redis";
 
 export type Anuncio = {
@@ -7,57 +6,64 @@ export type Anuncio = {
   descripcion: string;
   precio: number;
   provincia: string;
-  ciudad: string; // tu "canton" en UI
+  canton: string;
+  categoria: string;
+  subcategoria?: string;
   whatsapp: string;
   fotos: string[];
-  categoria?: string;
-  subcategoria?: string;
   createdAt: string;
-  updatedAt?: string;
 };
 
 const redis = Redis.fromEnv();
 
 const IDS_KEY = "puraventa:anuncios:ids";
-const keyFor = (id: string) => `puraventa:anuncio:${id}`;
 
-export async function addAnuncio(a: Anuncio) {
-  await redis.set(keyFor(a.id), a);
-  // guarda el id delante para que lo último salga primero
-  await redis.lpush(IDS_KEY, a.id);
+function keyFor(id: string) {
+  return `puraventa:anuncio:${id}`;
 }
 
-export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
-  const ids = await redis.lrange<string[]>(IDS_KEY, 0, Math.max(0, limit - 1));
-  if (!ids || ids.length === 0) return [];
-
-  const anuncios = await Promise.all(ids.map((id) => redis.get<Anuncio>(keyFor(id))));
-  return anuncios.filter(Boolean) as Anuncio[];
+// Crear anuncio
+export async function addAnuncio(anuncio: Anuncio) {
+  await redis.set(keyFor(anuncio.id), anuncio);
+  await redis.lpush(IDS_KEY, anuncio.id);
 }
 
+// Obtener uno
 export async function getAnuncio(id: string): Promise<Anuncio | null> {
   const a = await redis.get<Anuncio>(keyFor(id));
   return a ?? null;
 }
 
-export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promise<Anuncio | null> {
-  const prev = await getAnuncio(id);
-  if (!prev) return null;
+// Listar todos
+export async function listAnuncios(): Promise<Anuncio[]> {
+  const ids = await redis.lrange<string>(IDS_KEY, 0, 200);
 
-  const next: Anuncio = {
-    ...prev,
-    ...patch,
-    id: prev.id,
-    updatedAt: new Date().toISOString(),
-  };
+  if (!ids || ids.length === 0) return [];
 
-  await redis.set(keyFor(id), next);
-  return next;
+  const anuncios = await Promise.all(
+    ids.map((id) => redis.get<Anuncio>(keyFor(id)))
+  );
+
+  return anuncios.filter(Boolean) as Anuncio[];
 }
 
-export async function deleteAnuncio(id: string): Promise<boolean> {
+// Actualizar
+export async function updateAnuncio(id: string, data: Partial<Anuncio>) {
+  const actual = await getAnuncio(id);
+  if (!actual) return null;
+
+  const actualizado: Anuncio = {
+    ...actual,
+    ...data,
+    id,
+  };
+
+  await redis.set(keyFor(id), actualizado);
+  return actualizado;
+}
+
+// Eliminar
+export async function deleteAnuncio(id: string) {
   await redis.del(keyFor(id));
-  // quita el id de la lista (todas las ocurrencias)
   await redis.lrem(IDS_KEY, 0, id);
-  return true;
 }
