@@ -7,7 +7,7 @@ export type Anuncio = {
   descripcion: string;
   precio: number;
   provincia: string;
-  ciudad: string; // (antes "canton")
+  ciudad: string; // tu "canton" en UI
   whatsapp: string;
   fotos: string[];
   categoria?: string;
@@ -16,76 +16,48 @@ export type Anuncio = {
   updatedAt?: string;
 };
 
-const r = Redis.fromEnv();
+const redis = Redis.fromEnv();
 
-// Keys
 const IDS_KEY = "puraventa:anuncios:ids";
 const keyFor = (id: string) => `puraventa:anuncio:${id}`;
 
-// Helpers
-function safeArray(x: unknown): string[] {
-  // fuerza a string[] aunque la lib devuelva unknown
-  if (!Array.isArray(x)) return [];
-  return x.filter((v) => typeof v === "string");
+export async function addAnuncio(a: Anuncio) {
+  await redis.set(keyFor(a.id), a);
+  // guarda el id delante para que lo último salga primero
+  await redis.lpush(IDS_KEY, a.id);
 }
 
-export async function addAnuncio(anuncio: Anuncio): Promise<void> {
-  // Guardar el anuncio
-  await r.set(keyFor(anuncio.id), anuncio);
+export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
+  const ids = await redis.lrange<string[]>(IDS_KEY, 0, Math.max(0, limit - 1));
+  if (!ids || ids.length === 0) return [];
 
-  // Añadir ID al inicio (más reciente primero)
-  await r.lpush(IDS_KEY, anuncio.id);
-}
-
-export async function listAnuncios(): Promise<Anuncio[]> {
-  // ⬇️ AQUÍ está la clave: ids SIEMPRE string[]
-  const raw = await r.lrange(IDS_KEY, 0, -1);
-  const ids: string[] = safeArray(raw);
-
-  if (ids.length === 0) return [];
-
-  // Traer anuncios en paralelo (sin mget para evitar typings raros)
-  const anuncios = await Promise.all(
-    ids.map((id: string) => r.get<Anuncio>(keyFor(id)))
-  );
-
-  // filtra null/undefined
+  const anuncios = await Promise.all(ids.map((id) => redis.get<Anuncio>(keyFor(id))));
   return anuncios.filter(Boolean) as Anuncio[];
 }
 
 export async function getAnuncio(id: string): Promise<Anuncio | null> {
-  const a = await r.get<Anuncio>(keyFor(id));
+  const a = await redis.get<Anuncio>(keyFor(id));
   return a ?? null;
 }
 
 export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promise<Anuncio | null> {
-  const current = await getAnuncio(id);
-  if (!current) return null;
+  const prev = await getAnuncio(id);
+  if (!prev) return null;
 
-  // normaliza canton->ciudad si llega así
-  const anyPatch: any = patch as any;
-  if (anyPatch?.canton && !anyPatch?.ciudad) anyPatch.ciudad = anyPatch.canton;
-
-  const updated: Anuncio = {
-    ...current,
-    ...anyPatch,
-    id: current.id,
-    createdAt: current.createdAt,
+  const next: Anuncio = {
+    ...prev,
+    ...patch,
+    id: prev.id,
     updatedAt: new Date().toISOString(),
   };
 
-  await r.set(keyFor(id), updated);
-  return updated;
+  await redis.set(keyFor(id), next);
+  return next;
 }
 
 export async function deleteAnuncio(id: string): Promise<boolean> {
-  const exists = await r.exists(keyFor(id));
-  if (!exists) return false;
-
-  await r.del(keyFor(id));
-
-  // Quitar ID de la lista (puede haber duplicados si antes se metió varias veces)
-  await r.lrem(IDS_KEY, 0, id);
-
+  await redis.del(keyFor(id));
+  // quita el id de la lista (todas las ocurrencias)
+  await redis.lrem(IDS_KEY, 0, id);
   return true;
 }
