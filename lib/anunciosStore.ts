@@ -7,86 +7,85 @@ export type Anuncio = {
   descripcion: string;
   precio: number;
   provincia: string;
-  ciudad: string;
+  ciudad: string; // (antes "canton")
   whatsapp: string;
   fotos: string[];
   categoria?: string;
   subcategoria?: string;
-  telefono?: string;
   createdAt: string;
   updatedAt?: string;
 };
 
-let _redis: Redis | null = null;
+const r = Redis.fromEnv();
 
-function redis(): Redis {
-  if (_redis) return _redis;
+// Keys
+const IDS_KEY = "puraventa:anuncios:ids";
+const keyFor = (id: string) => `puraventa:anuncio:${id}`;
 
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-
-  if (!url || !token) {
-    throw new Error("Faltan KV_REST_API_URL / KV_REST_API_TOKEN en env (Upstash).");
-  }
-
-  _redis = new Redis({ url, token });
-  return _redis;
-}
-
-const IDS_KEY = "anuncios:ids";
-const keyFor = (id: string) => `anuncio:${id}`;
-
-export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
-  const r = redis();
-  const ids = (await r.lrange<string[]>(IDS_KEY, 0, Math.max(0, limit - 1))) || [];
-  if (ids.length === 0) return [];
-
-  const anuncios = await Promise.all(ids.map((id) => r.get<Anuncio>(keyFor(id))));
-  return anuncios.filter(Boolean) as Anuncio[];
+// Helpers
+function safeArray(x: unknown): string[] {
+  // fuerza a string[] aunque la lib devuelva unknown
+  if (!Array.isArray(x)) return [];
+  return x.filter((v) => typeof v === "string");
 }
 
 export async function addAnuncio(anuncio: Anuncio): Promise<void> {
-  const r = redis();
+  // Guardar el anuncio
   await r.set(keyFor(anuncio.id), anuncio);
-  // lo ponemos el primero (más nuevo)
+
+  // Añadir ID al inicio (más reciente primero)
   await r.lpush(IDS_KEY, anuncio.id);
 }
 
+export async function listAnuncios(): Promise<Anuncio[]> {
+  // ⬇️ AQUÍ está la clave: ids SIEMPRE string[]
+  const raw = await r.lrange(IDS_KEY, 0, -1);
+  const ids: string[] = safeArray(raw);
+
+  if (ids.length === 0) return [];
+
+  // Traer anuncios en paralelo (sin mget para evitar typings raros)
+  const anuncios = await Promise.all(
+    ids.map((id: string) => r.get<Anuncio>(keyFor(id)))
+  );
+
+  // filtra null/undefined
+  return anuncios.filter(Boolean) as Anuncio[];
+}
+
 export async function getAnuncio(id: string): Promise<Anuncio | null> {
-  const r = redis();
   const a = await r.get<Anuncio>(keyFor(id));
   return a ?? null;
 }
 
 export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promise<Anuncio | null> {
-  const r = redis();
-  const cur = await r.get<Anuncio>(keyFor(id));
-  if (!cur) return null;
+  const current = await getAnuncio(id);
+  if (!current) return null;
 
-  const next: Anuncio = {
-    ...cur,
-    ...patch,
-    id: cur.id,
-    createdAt: cur.createdAt,
+  // normaliza canton->ciudad si llega así
+  const anyPatch: any = patch as any;
+  if (anyPatch?.canton && !anyPatch?.ciudad) anyPatch.ciudad = anyPatch.canton;
+
+  const updated: Anuncio = {
+    ...current,
+    ...anyPatch,
+    id: current.id,
+    createdAt: current.createdAt,
     updatedAt: new Date().toISOString(),
   };
 
-  await r.set(keyFor(id), next);
-  return next;
+  await r.set(keyFor(id), updated);
+  return updated;
 }
 
 export async function deleteAnuncio(id: string): Promise<boolean> {
-  const r = redis();
-  const existed = await r.get<Anuncio>(keyFor(id));
-  if (!existed) return false;
+  const exists = await r.exists(keyFor(id));
+  if (!exists) return false;
 
   await r.del(keyFor(id));
 
-  // quitar id de la lista (simple y fiable para tu escala)
-  const ids = (await r.lrange<string[]>(IDS_KEY, 0, -1)) || [];
-  const next = ids.filter((x) => x !== id);
-  await r.del(IDS_KEY);
-  if (next.length) await r.rpush(IDS_KEY, ...next);
+  // Quitar ID de la lista (puede haber duplicados si antes se metió varias veces)
+  await r.lrem(IDS_KEY, 0, id);
 
   return true;
 }
