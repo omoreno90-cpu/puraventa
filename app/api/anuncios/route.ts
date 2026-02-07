@@ -23,6 +23,8 @@ export async function POST(req: Request) {
     telefono: body.telefono,
     whatsapp: body.whatsapp,
     fotos: body.fotos ?? [],
+    categoria: body.categoria,
+    subcategoria: body.subcategoria,
   });
 
   return NextResponse.json({ ok: true, anuncio });

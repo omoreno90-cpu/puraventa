@@ -11,6 +11,8 @@ export type Anuncio = {
   telefono?: string;
   whatsapp?: string;
   fotos?: string[];
+  categoria?: string;
+  subcategoria?: string;
   createdAt: string;
   updatedAt?: string;
 };
@@ -34,12 +36,14 @@ declare global {
 }
 function getMem() {
   if (!globalThis.__PURAVENTA_ANUNCIOS_MEM__) globalThis.__PURAVENTA_ANUNCIOS_MEM__ = new Map();
-  if (!globalThis.__PURAVENTA_ANUNCIOS_IDS_MEM__) globalThis.__PURAVENTA_ANUNCIOS_IDS_MEM__ = [];
+  if (!globalThis.__PURAVENTA_ANUNUNCIOS_IDS_MEM__) globalThis.__PURAVENTA_ANUNCIOS_IDS_MEM__ = [];
   return {
     map: globalThis.__PURAVENTA_ANUNCIOS_MEM__!,
     ids: globalThis.__PURAVENTA_ANUNCIOS_IDS_MEM__!,
   };
 }
+// fix typo safe-guard (si existiera la var mal escrita en algún runtime)
+(globalThis as any).__PURAVENTA_ANUNUNCIOS_IDS_MEM__ = (globalThis as any).__PURAVENTA_ANUNUNCIOS_IDS_MEM__ ?? undefined;
 
 function newId() {
   return (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
@@ -56,7 +60,6 @@ export async function listAnuncios(): Promise<Anuncio[]> {
   const ids = (await redis.lrange(IDS_KEY, 0, -1)) as unknown as string[];
   if (!ids || ids.length === 0) return [];
 
-  // mget devuelve (T | null)[] y acepta ...keys: string[]
   const keys = ids.map(anuncioKey);
   const anuncios = (await redis.mget<Anuncio[]>(...keys)) as unknown as (Anuncio | null)[];
   return anuncios.filter((x): x is Anuncio => Boolean(x));
@@ -73,7 +76,9 @@ export async function getAnuncio(id: string): Promise<Anuncio | null> {
   return ((await redis.get(anuncioKey(id))) as unknown as Anuncio | null) ?? null;
 }
 
-export async function createAnuncio(input: Omit<Anuncio, "id" | "createdAt" | "updatedAt">): Promise<Anuncio> {
+export async function createAnuncio(
+  input: Omit<Anuncio, "id" | "createdAt" | "updatedAt">
+): Promise<Anuncio> {
   const id = newId();
   const anuncio: Anuncio = {
     id,
