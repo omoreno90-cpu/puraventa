@@ -1,4 +1,5 @@
-﻿"use client";
+﻿// app/publicar/page.tsx
+"use client";
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
@@ -35,13 +36,14 @@ const CATEGORIAS = [
 type Categoria = (typeof CATEGORIAS)[number];
 
 const SUBCATEGORIAS: Record<string, string[]> = {
-  "Tecnología": ["Celulares", "Computadoras", "TV y audio", "Videojuegos", "Cámaras", "Accesorios"],
-  "Muebles": ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior", "Otros"],
-  "Electrodomésticos": ["Cocina", "Lavado", "Refrigeración", "Clima", "Otros"],
+  Tecnología: ["Celulares", "Computadoras", "TV y audio", "Videojuegos", "Cámaras", "Accesorios"],
+  Muebles: ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior", "Otros"],
+  Electrodomésticos: ["Cocina", "Lavado", "Refrigeración", "Clima", "Otros"],
   "Motos y vehículos": ["Autos", "Motos", "Repuestos", "Accesorios", "Otros"],
   "Deportes & outdoor": ["Gimnasio", "Bicicletas", "Camping / aventura", "Deportes varios", "Otros"],
-  "Hogar": ["Decoración", "Iluminación", "Cocina y menaje", "Organización", "Limpieza", "Otros"],
+  Hogar: ["Decoración", "Iluminación", "Cocina y menaje", "Organización", "Limpieza", "Otros"],
   "Alquiler de casas y apartamentos": ["Casa", "Apartamento", "Habitación", "Otros"],
+  Otros: ["Otros"],
 };
 
 function inputStyle(): React.CSSProperties {
