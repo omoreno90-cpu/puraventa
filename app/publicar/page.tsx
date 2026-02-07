@@ -33,6 +33,17 @@ const CATEGORIAS = [
 
 type Categoria = (typeof CATEGORIAS)[number];
 
+const SUBCATEGORIAS: Record<Categoria, string[]> = {
+  Muebles: ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior/Jardín", "Decoración", "Almacenaje", "Otros"],
+  "Electrodomésticos": ["Cocina", "Lavado", "Climatización", "Limpieza", "Pequeño electrodoméstico", "Otros"],
+  "Tecnología": ["Celulares", "Computadoras", "Tablets", "TV & Audio", "Consolas", "Cámaras", "Accesorios", "Otros"],
+  "Motos y vehículos": ["Carros", "Motos", "Repuestos", "Accesorios", "Servicios", "Otros"],
+  "Deportes & outdoor": ["Camping", "Ciclismo", "Fitness", "Surf", "Fútbol", "Pesca", "Otros"],
+  "Hogar": ["Cocina", "Baño", "Iluminación", "Textil", "Organización", "Herramientas", "Otros"],
+  "Alquiler de casas y apartamentos": ["Casa", "Apartamento", "Habitación", "Bodega", "Otros"],
+  "Otros": ["Varios"],
+};
+
 const MESES = [
   "Enero",
   "Febrero",
@@ -119,7 +130,6 @@ async function uploadToCloudinary(file: File): Promise<string> {
 
   if (!res.ok) throw new Error(data?.error || "Error subiendo foto");
   if (!data?.url) throw new Error("Upload sin URL");
-
   return String(data.url);
 }
 
@@ -131,7 +141,10 @@ export default function PublicarPage() {
   const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
-  const [subcategoria, setSubcategoria] = useState<string>("");
+
+  // ✅ subcategoría por selector (como estaba)
+  const subcats = useMemo(() => SUBCATEGORIAS[categoria] ?? ["Otros"], [categoria]);
+  const [subcategoria, setSubcategoria] = useState<string>(SUBCATEGORIAS["Muebles"][0] || "Otros");
 
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
@@ -171,8 +184,7 @@ export default function PublicarPage() {
     }
 
     setFiles(list);
-    const previews = list.map((f) => URL.createObjectURL(f));
-    limpiarPreviews(previews);
+    limpiarPreviews(list.map((f) => URL.createObjectURL(f)));
   }
 
   function quitarFoto(idx: number) {
@@ -217,7 +229,6 @@ export default function PublicarPage() {
         return;
       }
 
-      // ✅ Validación vehículos
       const esVehiculos = categoria === "Motos y vehículos";
       let anoNum: number | undefined = undefined;
 
@@ -227,30 +238,21 @@ export default function PublicarPage() {
           setError("Año del vehículo inválido.");
           return;
         }
-        if (!dekraMes) {
-          setError("Selecciona el mes de DEKRA.");
-          return;
-        }
       }
 
-      // 1) subir fotos
       let fotos: string[] = [];
       if (files.length > 0) {
-        fotos = [];
-        for (const f of files) {
-          const url = await uploadToCloudinary(f);
-          fotos.push(url);
-        }
+        for (const f of files) fotos.push(await uploadToCloudinary(f));
       }
 
-      // 2) guardar anuncio en el server (Redis)
       const payload: any = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
         canton,
         categoria,
-        subcategoria: subcategoria.trim() || undefined,
+        // ✅ guardamos la subcategoría seleccionada
+        subcategoria: String(subcategoria || "").trim() || undefined,
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
@@ -376,8 +378,8 @@ export default function PublicarPage() {
               onChange={(e) => {
                 const next = e.target.value as Categoria;
                 setCategoria(next);
-                // reset subcat / vehiculos
-                setSubcategoria("");
+                // ✅ al cambiar categoría, resetea subcat a la primera de esa categoría
+                setSubcategoria((SUBCATEGORIAS[next] && SUBCATEGORIAS[next][0]) ? SUBCATEGORIAS[next][0] : "Otros");
               }}
             >
               {CATEGORIAS.map((c) => (
@@ -387,12 +389,14 @@ export default function PublicarPage() {
               ))}
             </select>
 
-            <input
-              style={inputStyle()}
-              placeholder="Subcategoría (opcional) — ej: Motos, Coches, Repuestos…"
-              value={subcategoria}
-              onChange={(e) => setSubcategoria(e.target.value)}
-            />
+            {/* ✅ Subcategorías por selector */}
+            <select style={selectStyle()} value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)}>
+              {subcats.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
 
             {esVehiculos && (
               <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
@@ -426,10 +430,6 @@ export default function PublicarPage() {
                     <option value="si">DEKRA al día: Sí</option>
                     <option value="no">DEKRA al día: No</option>
                   </select>
-                </div>
-
-                <div style={{ marginTop: 10, fontSize: 12, color: COLORS.subtext, fontWeight: 650 }}>
-                  Esto ayuda a filtrar y da confianza (y evita preguntas repetidas).
                 </div>
               </div>
             )}
