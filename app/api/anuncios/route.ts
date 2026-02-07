@@ -1,18 +1,13 @@
 ﻿import { NextResponse } from "next/server";
-import { addAnuncio, listAnuncios, type Anuncio, MESES_DEKRA } from "@/lib/anunciosStore";
+import { addAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
 
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
-function uuid() {
-  // suficiente para MVP
-  return crypto.randomUUID();
-}
-
 export async function GET() {
   try {
-    const anuncios = await listAnuncios();
+    const anuncios = await listAnuncios(200);
     return json({ ok: true, anuncios });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
@@ -23,78 +18,66 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
-    const titulo = String(body.titulo ?? "").trim();
-    const descripcion = String(body.descripcion ?? "").trim();
+    // mínimos
+    const titulo = String(body?.titulo ?? "").trim();
+    const descripcion = String(body?.descripcion ?? "").trim();
+    const provincia = String(body?.provincia ?? "").trim();
+    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim();
+    const whatsapp = String(body?.whatsapp ?? "").trim();
+    const categoria = String(body?.categoria ?? "").trim();
+    const subcategoria = String(body?.subcategoria ?? "").trim();
+    const fotos = Array.isArray(body?.fotos) ? body.fotos.map(String) : [];
 
-    const precioNum = Number(body.precio);
-    const provincia = String(body.provincia ?? "").trim();
-    const canton = String(body.canton ?? body.ciudad ?? "").trim();
-    const whatsapp = String(body.whatsapp ?? "").replace(/\D/g, "");
-    const fotos = Array.isArray(body.fotos) ? body.fotos.map(String) : [];
+    const precioNum = Number(body?.precio);
+    if (!titulo || titulo.length < 3) return json({ ok: false, error: "Título inválido" }, 400);
+    if (!descripcion || descripcion.length < 5) return json({ ok: false, error: "Descripción inválida" }, 400);
+    if (!Number.isFinite(precioNum) || precioNum <= 0) return json({ ok: false, error: "Precio inválido" }, 400);
+    if (!provincia) return json({ ok: false, error: "Provincia inválida" }, 400);
 
-    const categoria = String(body.categoria ?? "").trim();
-    const subcategoria = String(body.subcategoria ?? "").trim() || undefined;
+    // 🚗 Vehículos (opcionales)
+    const vehiculoAno =
+      body?.vehiculoAno === undefined || body?.vehiculoAno === null || body?.vehiculoAno === ""
+        ? undefined
+        : Number(body.vehiculoAno);
 
-    if (titulo.length < 5) return json({ ok: false, error: "Título demasiado corto." }, 400);
-    if (descripcion.length < 10) return json({ ok: false, error: "Descripción demasiado corta." }, 400);
-    if (!Number.isFinite(precioNum) || precioNum <= 0) return json({ ok: false, error: "Precio inválido." }, 400);
-    if (!provincia) return json({ ok: false, error: "Provincia obligatoria." }, 400);
-    if (!canton) return json({ ok: false, error: "Cantón/ciudad obligatoria." }, 400);
-    if (whatsapp.length < 8) return json({ ok: false, error: "WhatsApp inválido." }, 400);
-    if (!categoria) return json({ ok: false, error: "Categoría obligatoria." }, 400);
+    const marchamoAlDia =
+      body?.marchamoAlDia === undefined || body?.marchamoAlDia === null || body?.marchamoAlDia === ""
+        ? undefined
+        : Boolean(body.marchamoAlDia);
 
-    // ✅ Campos vehículos (solo si categoría lo es)
-    let vehiculoAno: number | undefined = undefined;
-    let marchamoAlDia: boolean | undefined = undefined;
-    let dekraAlDia: boolean | undefined = undefined;
-    let dekraMes: (typeof MESES_DEKRA)[number] | undefined = undefined;
+    const dekraAlDia =
+      body?.dekraAlDia === undefined || body?.dekraAlDia === null || body?.dekraAlDia === ""
+        ? undefined
+        : Boolean(body.dekraAlDia);
 
-    if (categoria === "Motos y vehículos") {
-      vehiculoAno = Number(body.vehiculoAno);
-      if (!Number.isFinite(vehiculoAno) || vehiculoAno < 1950 || vehiculoAno > new Date().getFullYear() + 1) {
-        return json({ ok: false, error: "Año del vehículo inválido." }, 400);
-      }
-
-      marchamoAlDia = Boolean(body.marchamoAlDia);
-      dekraAlDia = Boolean(body.dekraAlDia);
-
-      const mes = String(body.dekraMes ?? "").trim();
-      if (!MESES_DEKRA.includes(mes as any)) {
-        return json({ ok: false, error: "Mes de DEKRA inválido." }, 400);
-      }
-      dekraMes = mes as any;
-    }
+    const dekraMes = String(body?.dekraMes ?? "").trim() || undefined;
 
     const anuncio: Anuncio = {
-      id: uuid(),
+      id: crypto.randomUUID(),
       titulo,
       descripcion,
       precio: precioNum,
-
       provincia,
-      canton,
-      ciudad: canton,
-
+      ciudad,
       whatsapp,
       fotos,
+      categoria: categoria || undefined,
+      subcategoria: subcategoria || undefined,
 
-      categoria,
-      subcategoria,
+      createdAt: new Date().toISOString(),
+      updatedAt: undefined,
 
       vehiculoAno,
       marchamoAlDia,
       dekraAlDia,
       dekraMes,
-
-      createdAt: new Date().toISOString(),
-      updatedAt: undefined,
     };
 
     await addAnuncio(anuncio);
 
-    const anuncios = await listAnuncios();
+    const anuncios = await listAnuncios(200);
     return json({ ok: true, anuncio, anuncios });
   } catch (e: any) {
-    return json({ ok: false, error: e?.message || "Error guardando anuncio" }, 500);
+    return json({ ok: false, error: e?.message || "Error creando anuncio" }, 500);
   }
 }
