@@ -1,135 +1,172 @@
 import { Redis } from "@upstash/redis";
-
-export type MesDekrA =
-  | "Enero"
-  | "Febrero"
-  | "Marzo"
-  | "Abril"
-  | "Mayo"
-  | "Junio"
-  | "Julio"
-  | "Agosto"
-  | "Septiembre"
-  | "Octubre"
-  | "Noviembre"
-  | "Diciembre";
-
-export const MESES_DEKRA: MesDekrA[] = [
-  "Enero",
-  "Febrero",
-  "Marzo",
-  "Abril",
-  "Mayo",
-  "Junio",
-  "Julio",
-  "Agosto",
-  "Septiembre",
-  "Octubre",
-  "Noviembre",
-  "Diciembre",
-];
+import fs from "fs";
+import path from "path";
 
 export type Anuncio = {
   id: string;
-
   titulo: string;
   descripcion: string;
   precio: number;
 
   provincia: string;
-  ciudad?: string; // compat
-  canton?: string; // compat
+  ciudad?: string;
+  canton?: string;
 
-  whatsapp: string;
-  fotos: string[];
+  whatsapp?: string;
+  fotos?: string[];
 
-  categoria: string;
+  categoria?: string;
   subcategoria?: string;
-
-  // ✅ Solo para "Motos y vehículos"
-  vehiculoAno?: number;
-  marchamoAlDia?: boolean;
-  dekraAlDia?: boolean;
-  dekraMes?: MesDekrA;
 
   createdAt: string;
   updatedAt?: string;
+
+  // 🚗 Vehículos (opcionales)
+  vehiculoAno?: number;
+  marchamoAlDia?: boolean;
+  dekraAlDia?: boolean;
+  dekraMes?: string;
 };
 
-const IDS_KEY = "pv:anuncios:ids";
+const IDS_KEY = "puraventa:anuncios:ids";
 
 function keyFor(id: string) {
-  return `pv:anuncio:${id}`;
+  return `puraventa:anuncio:${id}`;
 }
 
-let _redis: Redis | null = null;
-
-export function getRedis() {
-  if (_redis) return _redis;
-
+function getRedis() {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (!url || !token) {
-    // No rompas build por esto, pero sí deja claro el error en runtime
     throw new Error("Faltan UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN en env.");
   }
 
-  _redis = new Redis({ url, token });
-  return _redis;
+  return new Redis({ url, token });
 }
 
-export async function addAnuncio(anuncio: Anuncio) {
-  const redis = getRedis();
-  await redis.set(keyFor(anuncio.id), anuncio);
-  await redis.lpush(IDS_KEY, anuncio.id);
+function legacyFilePath() {
+  return path.join(process.cwd(), "data", "anuncios.json");
 }
 
-export async function listAnuncios(): Promise<Anuncio[]> {
+function readLegacyAll(): Anuncio[] {
+  try {
+    const p = legacyFilePath();
+    if (!fs.existsSync(p)) return [];
+    const raw = fs.readFileSync(p, "utf8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? (arr as Anuncio[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function findLegacyById(id: string): Anuncio | null {
+  const all = readLegacyAll();
+  const a = all.find((x: any) => String(x?.id) === String(id));
+  return a ? (a as Anuncio) : null;
+}
+
+async function ensureInRedis(a: Anuncio) {
+  const redis = getRedis();
+  const id = String(a.id);
+
+  // normaliza createdAt
+  const createdAt = String((a as any).createdAt ?? (a as any).creadoEn ?? new Date().toISOString());
+
+  const normalized: Anuncio = {
+    ...a,
+    id,
+    createdAt,
+    // compat: si venía con canton/ciudad mezclado
+    ciudad: (a as any).ciudad ?? (a as any).canton ?? a.ciudad,
+    canton: (a as any).canton ?? (a as any).ciudad ?? a.canton,
+  };
+
+  await redis.set(keyFor(id), normalized);
+
+  // mete el id en la lista si no está (sin duplicados)
+  await redis.lrem(IDS_KEY, 0, id);
+  await redis.lpush(IDS_KEY, id);
+}
+
+export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
   const redis = getRedis();
 
-  const ids = (await redis.lrange(IDS_KEY, 0, 199)) as unknown as string[];
-  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const idsRaw = (await redis.lrange(IDS_KEY, 0, Math.max(0, limit - 1))) as unknown;
+  const ids = (Array.isArray(idsRaw) ? idsRaw : []) as string[];
 
+  // Si Redis está vacío, intenta importar TODO el legacy (si existe)
+  if (ids.length === 0) {
+    const legacy = readLegacyAll();
+    if (legacy.length > 0) {
+      for (const a of legacy) {
+        if (a?.id) await ensureInRedis(a);
+      }
+      const ids2Raw = (await redis.lrange(IDS_KEY, 0, Math.max(0, limit - 1))) as unknown;
+      const ids2 = (Array.isArray(ids2Raw) ? ids2Raw : []) as string[];
+      return await listByIds(ids2);
+    }
+    return [];
+  }
+
+  return await listByIds(ids);
+}
+
+async function listByIds(ids: string[]): Promise<Anuncio[]> {
+  const redis = getRedis();
   const keys = ids.map(keyFor);
 
-  // Tipado robusto: algunos tipos de Upstash pueden liar mget
+  // Upstash typings a veces son raros con mget => casteo robusto
   const raw = (await (redis as any).mget(...keys)) as unknown;
-  const anuncios = raw as (Anuncio | null)[];
+  const arr = (Array.isArray(raw) ? raw : []) as (Anuncio | null)[];
 
-  return (Array.isArray(anuncios) ? anuncios : []).filter(Boolean) as Anuncio[];
+  const out = arr.filter(Boolean) as Anuncio[];
+
+  // ordena por createdAt desc si existe
+  out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+  return out;
 }
 
 export async function getAnuncio(id: string): Promise<Anuncio | null> {
   const redis = getRedis();
-  const a = (await redis.get(keyFor(id))) as unknown as Anuncio | null;
-  return a ?? null;
+  const key = keyFor(id);
+
+  const fromRedis = (await redis.get(key)) as Anuncio | null;
+  if (fromRedis?.id) return fromRedis;
+
+  // fallback legacy: si existe en data/anuncios.json, lo migramos y devolvemos
+  const legacy = findLegacyById(id);
+  if (legacy?.id) {
+    await ensureInRedis(legacy);
+    const again = (await redis.get(key)) as Anuncio | null;
+    return again?.id ? again : null;
+  }
+
+  return null;
+}
+
+export async function addAnuncio(a: Anuncio): Promise<void> {
+  await ensureInRedis(a);
 }
 
 export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promise<Anuncio | null> {
-  const redis = getRedis();
-  const prev = await getAnuncio(id);
-  if (!prev) return null;
+  const current = await getAnuncio(id);
+  if (!current) return null;
 
-  const actualizado: Anuncio = {
-    ...prev,
+  const updated: Anuncio = {
+    ...current,
     ...patch,
-    id: prev.id,
-    createdAt: prev.createdAt,
+    id: String(current.id),
     updatedAt: new Date().toISOString(),
   };
 
-  await redis.set(keyFor(id), actualizado);
-  return actualizado;
+  await ensureInRedis(updated);
+  return updated;
 }
 
-export async function deleteAnuncio(id: string): Promise<boolean> {
+export async function deleteAnuncio(id: string): Promise<void> {
   const redis = getRedis();
-  const prev = await getAnuncio(id);
-  if (!prev) return false;
-
   await redis.del(keyFor(id));
-  // elimina UNA aparición del id en la lista
-  await (redis as any).lrem(IDS_KEY, 0, id);
-  return true;
+  await redis.lrem(IDS_KEY, 0, id);
 }
