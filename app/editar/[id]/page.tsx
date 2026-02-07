@@ -1,15 +1,10 @@
+// app/editar/[id]/page.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import { Inter } from "next/font/google";
-import {
-  actualizarAnuncio,
-  esPropietario,
-  obtenerAnuncioPorId,
-  obtenerOwnerToken,
-} from "@/lib/storage";
 import { PROVINCIAS, CANTONES } from "@/lib/ubicaciones";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
@@ -23,6 +18,7 @@ const COLORS = {
   subtext: "#64748B",
   muted: "#94A3B8",
   danger: "#DC2626",
+  success: "#16A34A",
 };
 
 const CATEGORIAS = [
@@ -36,6 +32,19 @@ const CATEGORIAS = [
   "Otros",
 ] as const;
 
+type Categoria = (typeof CATEGORIAS)[number];
+
+const SUBCATEGORIAS: Record<string, string[]> = {
+  "Muebles": ["Sofás", "Mesas", "Sillas", "Camas", "Armarios", "Oficina", "Otros"],
+  "Electrodomésticos": ["Cocina", "Limpieza", "Clima", "Pequeño electrodoméstico", "Otros"],
+  "Tecnología": ["Celulares", "Ordenadores", "Tablets", "Consolas", "TV/Audio", "Accesorios", "Otros"],
+  "Motos y vehículos": ["Motos", "Carros", "Repuestos", "Accesorios", "Servicios", "Otros"],
+  "Deportes & outdoor": ["Gym", "Bicis", "Camping", "Surf/Mar", "Fútbol", "Otros"],
+  "Hogar": ["Cocina", "Baño", "Decoración", "Jardín", "Iluminación", "Otros"],
+  "Alquiler de casas y apartamentos": ["Apartamento", "Casa", "Habitación", "Otros"],
+  "Otros": ["Otros"],
+};
+
 function inputStyle(): React.CSSProperties {
   return {
     padding: "12px 14px",
@@ -43,7 +52,7 @@ function inputStyle(): React.CSSProperties {
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
     outline: "none",
-    fontWeight: 500,
+    fontWeight: 600,
     color: COLORS.text,
   };
 }
@@ -54,7 +63,7 @@ function selectStyle(): React.CSSProperties {
     borderRadius: 14,
     border: `1px solid ${COLORS.border}`,
     background: COLORS.card,
-    fontWeight: 600,
+    fontWeight: 700,
     color: COLORS.text,
   };
 }
@@ -66,134 +75,159 @@ function primaryBtn(disabled?: boolean): React.CSSProperties {
     border: `1px solid ${COLORS.navy}`,
     background: disabled ? COLORS.border : COLORS.navy,
     color: disabled ? "#7A8193" : "white",
-    fontWeight: 750,
+    fontWeight: 850,
     cursor: disabled ? "not-allowed" : "pointer",
   };
 }
 
+function ghostBtn(): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: `1px solid ${COLORS.border}`,
+    background: COLORS.card,
+    fontWeight: 750,
+    cursor: "pointer",
+    color: COLORS.text,
+  };
+}
+
+type ApiGet = { ok: boolean; anuncio?: any; error?: string };
+
 export default function EditarPage() {
-  const params = useParams<{ id: string }>();
   const router = useRouter();
-  const id = params?.id ?? "";
+  const params = useParams();
 
-  const anuncio = useMemo(() => (id ? obtenerAnuncioPorId(id) : null), [id]);
-  const ownerToken = useMemo(() => obtenerOwnerToken(), []);
+  const id = useMemo(() => {
+    const raw: any = (params as any)?.id;
+    return Array.isArray(raw) ? raw[0] : String(raw || "");
+  }, [params]);
 
-  const permitido = anuncio ? esPropietario(anuncio, ownerToken) : false;
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
-  const [titulo, setTitulo] = useState(anuncio?.titulo ?? "");
-  const [precio, setPrecio] = useState(String(anuncio?.precio ?? ""));
-  const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>(
-    (anuncio?.provincia as any) || "San José"
-  );
-  const [canton, setCanton] = useState<string>(anuncio?.canton || CANTONES["San José"][0]);
-  const [categoria, setCategoria] = useState<(typeof CATEGORIAS)[number]>(
-    (anuncio?.categoria as any) || "Muebles"
-  );
-  const [descripcion, setDescripcion] = useState(anuncio?.descripcion ?? "");
-  const [whatsapp, setWhatsapp] = useState(anuncio?.whatsapp ?? "");
-  const [fotos, setFotos] = useState<string[]>(anuncio?.fotos ?? []);
-
-  const [error, setError] = useState<string | null>(null);
-  const [guardando, setGuardando] = useState(false);
+  const [titulo, setTitulo] = useState("");
+  const [precio, setPrecio] = useState("");
+  const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
+  const [canton, setCanton] = useState("");
+  const [categoria, setCategoria] = useState<Categoria>("Muebles");
+  const [subcategoria, setSubcategoria] = useState<string>("");
+  const [descripcion, setDescripcion] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
+  const subcats = useMemo(() => SUBCATEGORIAS[categoria] ?? ["Otros"], [categoria]);
 
-  function quitarFoto(idx: number) {
-    setFotos((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  async function onPickFotos(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files) return;
-    const list = Array.from(files).slice(0, 5);
-
-    const urls = await Promise.all(
-      list.map(
-        (f) =>
-          new Promise<string>((resolve, reject) => {
-            const r = new FileReader();
-            r.onload = () => resolve(String(r.result));
-            r.onerror = reject;
-            r.readAsDataURL(f);
-          })
-      )
-    );
-    setFotos(urls);
-  }
-
-  async function guardar() {
-    setError(null);
-
-    if (!anuncio) {
-      setError("Anuncio no encontrado.");
-      return;
+  useEffect(() => {
+    if (!subcats.includes(subcategoria)) {
+      setSubcategoria(subcats[0] || "Otros");
     }
-    if (!permitido) {
-      setError("No puedes editar este anuncio desde este dispositivo/navegador.");
-      return;
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoria]);
 
-    const precioNum = Number(precio);
-    if (!Number.isFinite(precioNum) || precioNum <= 0) {
-      setError("Pon un precio válido.");
-      return;
+  useEffect(() => {
+    if (!cantonesDisponibles.includes(canton)) {
+      setCanton(cantonesDisponibles[0] || "");
     }
-    if (titulo.trim().length < 5) {
-      setError("El título debe tener al menos 5 caracteres.");
-      return;
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provincia]);
 
-    setGuardando(true);
+  async function cargar() {
+    if (!id) return;
+    setCargando(true);
+    setErrorCarga(null);
+
     try {
-      actualizarAnuncio(anuncio.id, {
-        titulo: titulo.trim(),
+      const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, { cache: "no-store" });
+      const json = (await res.json().catch(() => ({}))) as ApiGet;
+
+      if (!res.ok || !json?.ok || !json?.anuncio) {
+        throw new Error(json?.error || "Anuncio no encontrado.");
+      }
+
+      const a = json.anuncio;
+
+      setTitulo(String(a?.titulo ?? ""));
+      setPrecio(String(a?.precio ?? ""));
+      setProvincia((a?.provincia as any) || "San José");
+
+      // API: ciudad / UI vieja: canton
+      const city = String(a?.ciudad ?? a?.canton ?? "");
+      setCanton(city);
+
+      setCategoria((a?.categoria as any) || "Muebles");
+      setSubcategoria(String(a?.subcategoria ?? SUBCATEGORIAS[(a?.categoria as any) || "Muebles"]?.[0] || "Otros"));
+      setDescripcion(String(a?.descripcion ?? ""));
+      setWhatsapp(String(a?.whatsapp ?? ""));
+    } catch (e: any) {
+      setErrorCarga(e?.message || "Error cargando anuncio.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function guardar(e: React.FormEvent) {
+    e.preventDefault();
+    if (guardando) return;
+
+    setError(null);
+    setGuardando(true);
+
+    try {
+      const t = titulo.trim();
+      const d = descripcion.trim();
+      const ws = whatsapp.replace(/\D/g, "");
+
+      const precioNum = Number(precio);
+      if (t.length < 5) throw new Error("Pon un título más descriptivo (mín. 5 caracteres).");
+      if (d.length < 10) throw new Error("Añade una descripción (mín. 10 caracteres).");
+      if (!Number.isFinite(precioNum) || precioNum <= 0) throw new Error("Pon un precio válido.");
+      if (ws.length < 8) throw new Error("WhatsApp es obligatorio (mínimo 8 dígitos).");
+
+      const payload = {
+        titulo: t,
         precio: precioNum,
         provincia,
-        canton,
+        ciudad: canton, // API
+        canton, // por compatibilidad si algo lo usa
         categoria,
-        descripcion: descripcion.trim(),
-        whatsapp: whatsapp.trim(),
-        fotos,
+        subcategoria,
+        descripcion: d,
+        whatsapp: ws,
+      };
+
+      const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-      router.push(`/anuncio/${anuncio.id}`);
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Error guardando cambios.");
+      }
+
+      router.push(`/anuncio/${id}`);
     } catch (e: any) {
-      setError(String(e?.message || "Error guardando cambios."));
+      setError(e?.message || "Error guardando.");
     } finally {
       setGuardando(false);
     }
   }
 
-  if (!anuncio) {
-    return (
-      <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
-        <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 16px" }}>
-          <Link href="/" style={{ color: COLORS.navy, fontWeight: 800, textDecoration: "none" }}>
-            ← Volver
-          </Link>
-          <div style={{ marginTop: 12, padding: 16, border: `1px solid ${COLORS.border}`, borderRadius: 16, background: COLORS.card }}>
-            Anuncio no encontrado.
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 16px 60px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-          <Link href={`/anuncio/${anuncio.id}`} style={{ color: COLORS.navy, fontWeight: 800, textDecoration: "none" }}>
-            ← Volver al anuncio
-          </Link>
-          <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 800, textDecoration: "none" }}>
-            Normas
-          </Link>
-        </div>
-
         <div
           style={{
-            marginTop: 14,
             background: COLORS.card,
             border: `1px solid ${COLORS.border}`,
             borderRadius: 20,
@@ -201,87 +235,120 @@ export default function EditarPage() {
             boxShadow: "0 10px 30px rgba(10,20,40,0.06)",
           }}
         >
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: COLORS.text }}>Editar anuncio</h1>
-
-          {!permitido && (
-            <div style={{ marginTop: 10, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 12, background: "#FFF5F5", color: COLORS.danger, fontWeight: 800 }}>
-              No puedes editar este anuncio desde este navegador. (La edición se permite solo al creador.)
-            </div>
-          )}
-
-          <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-            <input style={inputStyle()} value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Título" />
-            <input style={inputStyle()} value={precio} onChange={(e) => setPrecio(e.target.value)} placeholder="Precio (₡)" />
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <select
-                style={selectStyle()}
-                value={provincia}
-                onChange={(e) => {
-                  const p = e.target.value as (typeof PROVINCIAS)[number];
-                  setProvincia(p);
-                  setCanton(CANTONES[p][0]);
-                }}
-              >
-                {PROVINCIAS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-
-              <select style={selectStyle()} value={canton} onChange={(e) => setCanton(e.target.value)}>
-                {cantonesDisponibles.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-
-            <select style={selectStyle()} value={categoria} onChange={(e) => setCategoria(e.target.value as any)}>
-              {CATEGORIAS.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-
-            <textarea style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción" />
-
-            <input style={inputStyle()} value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="WhatsApp (opcional)" />
-
-            <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
-              <div style={{ fontWeight: 800, color: COLORS.text }}>Fotos (máx. 5)</div>
-              <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
-
-              {fotos.length > 0 && (
-                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
-                  {fotos.map((src, i) => (
-                    <div key={i} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: COLORS.card, position: "relative" }}>
-                      <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
-                      <button
-                        onClick={() => quitarFoto(i)}
-                        style={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          borderRadius: 999,
-                          border: `1px solid ${COLORS.border}`,
-                          background: "rgba(255,255,255,0.95)",
-                          padding: "6px 10px",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Quitar
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {error && <div style={{ color: COLORS.danger, fontWeight: 800 }}>{error}</div>}
-
-            <button onClick={guardar} disabled={!permitido || guardando} style={primaryBtn(!permitido || guardando)}>
-              {guardando ? "Guardando..." : "Guardar cambios"}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 900, color: COLORS.text }}>
+              Editar anuncio
+            </h1>
+            <button type="button" onClick={() => router.push(`/anuncio/${id}`)} style={ghostBtn()}>
+              Volver
             </button>
           </div>
+
+          {cargando ? (
+            <div style={{ marginTop: 18, color: COLORS.subtext, fontWeight: 700 }}>Cargando…</div>
+          ) : errorCarga ? (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ color: COLORS.danger, fontWeight: 900 }}>{errorCarga}</div>
+              <div style={{ marginTop: 10 }}>
+                <button onClick={cargar} style={primaryBtn()}>
+                  Reintentar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={guardar} style={{ marginTop: 18, display: "grid", gap: 12 }}>
+              <input style={inputStyle()} placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+
+              <input
+                style={inputStyle()}
+                placeholder="Precio (₡)"
+                value={precio}
+                onChange={(e) => setPrecio(e.target.value)}
+                inputMode="numeric"
+              />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <select
+                  style={selectStyle()}
+                  value={provincia}
+                  onChange={(e) => {
+                    const p = e.target.value as (typeof PROVINCIAS)[number];
+                    setProvincia(p);
+                    setCanton(CANTONES[p][0]);
+                  }}
+                >
+                  {PROVINCIAS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+
+                <select style={selectStyle()} value={canton} onChange={(e) => setCanton(e.target.value)}>
+                  {cantonesDisponibles.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <select
+                  style={selectStyle()}
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value as Categoria)}
+                >
+                  {CATEGORIAS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  style={selectStyle()}
+                  value={subcategoria}
+                  onChange={(e) => setSubcategoria(e.target.value)}
+                >
+                  {subcats.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <textarea
+                style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }}
+                placeholder="Descripción"
+                value={descripcion}
+                onChange={(e) => setDescripcion(e.target.value)}
+              />
+
+              <input
+                style={inputStyle()}
+                placeholder="WhatsApp (obligatorio) — ej: 8888-8888"
+                value={whatsapp}
+                onChange={(e) => setWhatsapp(e.target.value)}
+                inputMode="tel"
+              />
+
+              {error && <div style={{ color: COLORS.danger, fontWeight: 900 }}>{error}</div>}
+
+              <button type="submit" disabled={guardando} style={primaryBtn(guardando)}>
+                {guardando ? "Guardando..." : "Guardar cambios"}
+              </button>
+
+              <div style={{ marginTop: 8, fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
+                Volver a{" "}
+                <Link href={`/anuncio/${id}`} style={{ color: COLORS.navy, fontWeight: 900 }}>
+                  ver el anuncio
+                </Link>
+                .
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </main>
