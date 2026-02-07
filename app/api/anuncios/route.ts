@@ -8,7 +8,7 @@ function json(data: any, status = 200) {
 
 export async function GET() {
   try {
-    const anuncios = await listAnuncios(200);
+    const anuncios = await listAnuncios();
     return json({ ok: true, anuncios });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
