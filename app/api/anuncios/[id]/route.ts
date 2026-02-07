@@ -1,4 +1,3 @@
-// app/api/anuncios/[id]/route.ts
 import { NextResponse } from "next/server";
 import {
   deleteAnuncio,
@@ -7,28 +6,59 @@ import {
   type Anuncio,
 } from "@/lib/anunciosStore";
 
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
+}
+
 type Ctx = { params: { id: string } };
 
 export async function GET(_req: Request, { params }: Ctx) {
-  const a = await getAnuncio(params.id);
-  if (!a) return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
-  return NextResponse.json({ ok: true, anuncio: a });
+  try {
+    const a = await getAnuncio(params.id);
+    if (!a) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
+    return json({ ok: true, anuncio: a });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error leyendo anuncio" }, 500);
+  }
 }
 
 export async function PUT(req: Request, { params }: Ctx) {
-  const body = (await req.json().catch(() => null)) as Partial<Anuncio> | null;
-  if (!body) return NextResponse.json({ ok: false, error: "Body inválido" }, { status: 400 });
+  try {
+    const body = await req.json();
 
-  const next = await updateAnuncio(params.id, body);
-  if (!next) return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
+    const patch: Partial<Anuncio> = {
+      titulo: body.titulo ?? undefined,
+      descripcion: body.descripcion ?? undefined,
+      precio: body.precio === undefined ? undefined : Number(body.precio),
 
-  return NextResponse.json({ ok: true, anuncio: next });
+      provincia: body.provincia ?? undefined,
+      canton: body.canton ?? undefined,
+
+      categoria: body.categoria ?? undefined,
+      subcategoria: body.subcategoria ?? undefined,
+
+      whatsapp: body.whatsapp ?? undefined,
+
+      fotos: Array.isArray(body.fotos) ? body.fotos : undefined,
+    };
+
+    const updated = await updateAnuncio(params.id, patch);
+    if (!updated) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
+
+    return json({ ok: true, anuncio: updated });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error actualizando anuncio" }, 500);
+  }
 }
 
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const a = await getAnuncio(params.id);
-  if (!a) return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
+  try {
+    const a = await getAnuncio(params.id);
+    if (!a) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
 
-  await deleteAnuncio(params.id);
-  return NextResponse.json({ ok: true });
+    await deleteAnuncio(params.id);
+    return json({ ok: true });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error borrando anuncio" }, 500);
+  }
 }
