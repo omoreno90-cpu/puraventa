@@ -7,88 +7,86 @@ export type Anuncio = {
   descripcion: string;
   precio: number;
   provincia: string;
-  canton: string;
-  categoria: string;
-  subcategoria?: string;
+  ciudad: string;
   whatsapp: string;
   fotos: string[];
+  categoria?: string;
+  subcategoria?: string;
+  telefono?: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
-const redis = Redis.fromEnv();
+let _redis: Redis | null = null;
 
-const IDS_KEY = "puraventa:anuncios:ids";
-const ITEM_KEY = (id: string) => `puraventa:anuncios:item:${id}`;
+function redis(): Redis {
+  if (_redis) return _redis;
 
-// Cache en memoria (solo para acelerar en el mismo runtime)
-declare global {
-  // eslint-disable-next-line no-var
-  var __PURAVENTA_CACHE__:
-    | { ids: string[]; items: Map<string, Anuncio>; loadedAt: number }
-    | undefined;
+  const url = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+
+  if (!url || !token) {
+    throw new Error("Faltan KV_REST_API_URL / KV_REST_API_TOKEN en env (Upstash).");
+  }
+
+  _redis = new Redis({ url, token });
+  return _redis;
 }
 
-function cache() {
-  if (!globalThis.__PURAVENTA_CACHE__) {
-    globalThis.__PURAVENTA_CACHE__ = {
-      ids: [],
-      items: new Map<string, Anuncio>(),
-      loadedAt: 0,
-    };
-  }
-  return globalThis.__PURAVENTA_CACHE__!;
+const IDS_KEY = "anuncios:ids";
+const keyFor = (id: string) => `anuncio:${id}`;
+
+export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
+  const r = redis();
+  const ids = (await r.lrange<string[]>(IDS_KEY, 0, Math.max(0, limit - 1))) || [];
+  if (ids.length === 0) return [];
+
+  const anuncios = await Promise.all(ids.map((id) => r.get<Anuncio>(keyFor(id))));
+  return anuncios.filter(Boolean) as Anuncio[];
 }
 
-export async function listAnuncios(): Promise<Anuncio[]> {
-  const c = cache();
-
-  // recarga “suave” cada 5s para no machacar Redis
-  const now = Date.now();
-  if (c.loadedAt && now - c.loadedAt < 5000 && c.ids.length) {
-    const arr = c.ids.map((id) => c.items.get(id)).filter(Boolean) as Anuncio[];
-    return arr;
-  }
-
-  const ids = (await redis.get<string[]>(IDS_KEY)) ?? [];
-  const safeIds = Array.isArray(ids) ? ids : [];
-
-  if (safeIds.length === 0) {
-    c.ids = [];
-    c.items.clear();
-    c.loadedAt = now;
-    return [];
-  }
-
-  const keys = safeIds.map((id) => ITEM_KEY(id));
-  const values = (await redis.mget(...keys)) as (Anuncio | null)[];
-
-  const map = new Map<string, Anuncio>();
-  for (let i = 0; i < safeIds.length; i++) {
-    const id = safeIds[i];
-    const v = values[i];
-    if (v && typeof v === "object") map.set(id, v);
-  }
-
-  c.ids = safeIds.filter((id) => map.has(id));
-  c.items = map;
-  c.loadedAt = now;
-
-  return c.ids.map((id) => c.items.get(id)!).filter(Boolean);
+export async function addAnuncio(anuncio: Anuncio): Promise<void> {
+  const r = redis();
+  await r.set(keyFor(anuncio.id), anuncio);
+  // lo ponemos el primero (más nuevo)
+  await r.lpush(IDS_KEY, anuncio.id);
 }
 
-export async function addAnuncio(a: Anuncio): Promise<void> {
-  // guarda item
-  await redis.set(ITEM_KEY(a.id), a);
+export async function getAnuncio(id: string): Promise<Anuncio | null> {
+  const r = redis();
+  const a = await r.get<Anuncio>(keyFor(id));
+  return a ?? null;
+}
 
-  // mete id al principio (más nuevo primero)
-  const ids = (await redis.get<string[]>(IDS_KEY)) ?? [];
-  const safeIds = Array.isArray(ids) ? ids : [];
-  const next = [a.id, ...safeIds.filter((x) => x !== a.id)];
-  await redis.set(IDS_KEY, next);
+export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promise<Anuncio | null> {
+  const r = redis();
+  const cur = await r.get<Anuncio>(keyFor(id));
+  if (!cur) return null;
 
-  // actualiza cache
-  const c = cache();
-  c.items.set(a.id, a);
-  c.ids = next;
-  c.loadedAt = Date.now();
+  const next: Anuncio = {
+    ...cur,
+    ...patch,
+    id: cur.id,
+    createdAt: cur.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await r.set(keyFor(id), next);
+  return next;
+}
+
+export async function deleteAnuncio(id: string): Promise<boolean> {
+  const r = redis();
+  const existed = await r.get<Anuncio>(keyFor(id));
+  if (!existed) return false;
+
+  await r.del(keyFor(id));
+
+  // quitar id de la lista (simple y fiable para tu escala)
+  const ids = (await r.lrange<string[]>(IDS_KEY, 0, -1)) || [];
+  const next = ids.filter((x) => x !== id);
+  await r.del(IDS_KEY);
+  if (next.length) await r.rpush(IDS_KEY, ...next);
+
+  return true;
 }

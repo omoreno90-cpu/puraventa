@@ -1,44 +1,48 @@
+// app/api/anuncios/[id]/route.ts
 import { NextResponse } from "next/server";
-import { deleteAnuncio, getAnuncio, updateAnuncio, type Anuncio } from "@/lib/anunciosStore";
+import { deleteAnuncio, getAnuncio, updateAnuncio } from "@/lib/anunciosStore";
 
-type Params = { id: string };
-type Ctx = { params: Params | Promise<Params> };
-
-async function getId(ctx: Ctx): Promise<string> {
-  const p = await Promise.resolve(ctx.params);
-  return p.id;
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
 }
 
-export async function GET(_req: Request, ctx: Ctx) {
-  const id = await getId(ctx);
-  const anuncio = await getAnuncio(id);
+type Ctx = { params: { id: string } };
 
-  if (!anuncio) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado", id }, { status: 404 });
+export async function GET(_req: Request, { params }: Ctx) {
+  try {
+    const anuncio = await getAnuncio(params.id);
+    if (!anuncio) return json({ ok: false, error: "No encontrado" }, 404);
+    return json({ ok: true, anuncio });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error" }, 500);
   }
+}
 
-  return NextResponse.json({ ok: true, anuncio });
+export async function PATCH(req: Request, { params }: Ctx) {
+  try {
+    const patch = (await req.json().catch(() => ({}))) as any;
+
+    // normaliza nombres (si llega canton)
+    if (patch?.canton && !patch?.ciudad) patch.ciudad = patch.canton;
+
+    const updated = await updateAnuncio(params.id, patch);
+    if (!updated) return json({ ok: false, error: "No encontrado" }, 404);
+    return json({ ok: true, anuncio: updated });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error" }, 500);
+  }
 }
 
 export async function PUT(req: Request, ctx: Ctx) {
-  const id = await getId(ctx);
-  const body = (await req.json().catch(() => ({}))) as Partial<Anuncio>;
-
-  const actualizado = await updateAnuncio(id, body);
-  if (!actualizado) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado", id }, { status: 404 });
-  }
-
-  return NextResponse.json({ ok: true, anuncio: actualizado });
+  return PATCH(req, ctx);
 }
 
-export async function DELETE(_req: Request, ctx: Ctx) {
-  const id = await getId(ctx);
-  const ok = await deleteAnuncio(id);
-
-  if (!ok) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado", id }, { status: 404 });
+export async function DELETE(_req: Request, { params }: Ctx) {
+  try {
+    const ok = await deleteAnuncio(params.id);
+    if (!ok) return json({ ok: false, error: "No encontrado" }, 404);
+    return json({ ok: true });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Error" }, 500);
   }
-
-  return NextResponse.json({ ok: true, deleted: true, id });
 }
