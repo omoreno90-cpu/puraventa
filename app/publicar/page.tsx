@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
@@ -34,9 +34,15 @@ const CATEGORIAS = [
 
 type Categoria = (typeof CATEGORIAS)[number];
 
-// ✅ Subcategorías SOLO para "Motos y vehículos"
-const SUBCATS_MOTOS_VEHICULOS = ["Repuestos", "Motos", "Carros", "Accesorios", "Otros"] as const;
-type SubcatMotos = (typeof SUBCATS_MOTOS_VEHICULOS)[number];
+const SUBCATEGORIAS: Record<string, string[]> = {
+  "Tecnología": ["Celulares", "Computadoras", "TV y audio", "Videojuegos", "Cámaras", "Accesorios"],
+  "Muebles": ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior", "Otros"],
+  "Electrodomésticos": ["Cocina", "Lavado", "Refrigeración", "Clima", "Otros"],
+  "Motos y vehículos": ["Autos", "Motos", "Repuestos", "Accesorios", "Otros"],
+  "Deportes & outdoor": ["Gimnasio", "Bicicletas", "Camping / aventura", "Deportes varios", "Otros"],
+  "Hogar": ["Decoración", "Iluminación", "Cocina y menaje", "Organización", "Limpieza", "Otros"],
+  "Alquiler de casas y apartamentos": ["Casa", "Apartamento", "Habitación", "Otros"],
+};
 
 function inputStyle(): React.CSSProperties {
   return {
@@ -128,10 +134,7 @@ export default function PublicarPage() {
   const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
-
-  // ✅ Subcategoría (solo se usa si categoria === "Motos y vehículos")
-  const [subcategoriaMotos, setSubcategoriaMotos] = useState<SubcatMotos>("Repuestos");
-
+  const [subcategoria, setSubcategoria] = useState<string>("");
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -141,16 +144,7 @@ export default function PublicarPage() {
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
 
-  // ✅ cuando cambias categoría, resetea subcat a valor por defecto
-  function onChangeCategoria(next: Categoria) {
-    setCategoria(next);
-    if (next === "Motos y vehículos") {
-      setSubcategoriaMotos("Repuestos");
-    }
-  }
-
   function limpiarPreviews(next: string[]) {
-    // revoca previews antiguas para no fugar memoria
     previewUrls.forEach((u) => {
       try {
         URL.revokeObjectURL(u);
@@ -164,7 +158,6 @@ export default function PublicarPage() {
     const list = e.target.files ? Array.from(e.target.files).slice(0, 5) : [];
     if (list.length === 0) return;
 
-    // límite 2MB por archivo
     for (const f of list) {
       if (f.size > 2_000_000) {
         setError("Cada foto debe pesar menos de 2 MB.");
@@ -207,7 +200,6 @@ export default function PublicarPage() {
         return;
       }
 
-      // WhatsApp obligatorio (solo números)
       const ws = whatsapp.replace(/\D/g, "");
       if (ws.length < 8) {
         setError("WhatsApp es obligatorio (mínimo 8 dígitos).");
@@ -220,7 +212,6 @@ export default function PublicarPage() {
         return;
       }
 
-      // 1) subir fotos a Cloudinary (si hay)
       let fotos: string[] = [];
       if (files.length > 0) {
         fotos = [];
@@ -230,19 +221,13 @@ export default function PublicarPage() {
         }
       }
 
-      // ✅ subcategoría solo si aplica
-      const subcategoria = categoria === "Motos y vehículos" ? subcategoriaMotos : undefined;
-
-      // 2) guardar anuncio en el server (API)
       const payload = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
-        // API nueva usa "ciudad" (pero seguimos mandando canton y ciudad para compatibilidad)
         canton,
-        ciudad: canton,
         categoria,
-        subcategoria,
+        subcategoria: subcategoria || undefined,
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
@@ -268,7 +253,7 @@ export default function PublicarPage() {
   }
 
   const esAlquiler = categoria === "Alquiler de casas y apartamentos";
-  const esMotosVehiculos = categoria === "Motos y vehículos";
+  const subs = SUBCATEGORIAS[categoria] ?? null;
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -310,10 +295,10 @@ export default function PublicarPage() {
             }}
           >
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={chipStyle()}>⛔ No animales</span>
-              <span style={chipStyle()}>⛔ No sexo</span>
-              <span style={chipStyle()}>⛔ No estafas</span>
-              <span style={chipStyle()}>⛔ Ilegal/armas/drogas</span>
+              <span style={chipStyle()}>⌧ No animales</span>
+              <span style={chipStyle()}>⌧ No sexo</span>
+              <span style={chipStyle()}>⌧ No estafas</span>
+              <span style={chipStyle()}>⌧ Ilegal/armas/drogas</span>
             </div>
             <Link href="/normas" style={{ color: COLORS.navy, fontWeight: 900, textDecoration: "none" }}>
               Ver normas →
@@ -357,7 +342,15 @@ export default function PublicarPage() {
               </select>
             </div>
 
-            <select style={selectStyle()} value={categoria} onChange={(e) => onChangeCategoria(e.target.value as Categoria)}>
+            <select
+              style={selectStyle()}
+              value={categoria}
+              onChange={(e) => {
+                const cat = e.target.value as Categoria;
+                setCategoria(cat);
+                setSubcategoria("");
+              }}
+            >
               {CATEGORIAS.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -365,14 +358,10 @@ export default function PublicarPage() {
               ))}
             </select>
 
-            {/* ✅ Subcategoría para Motos y vehículos */}
-            {esMotosVehiculos && (
-              <select
-                style={selectStyle()}
-                value={subcategoriaMotos}
-                onChange={(e) => setSubcategoriaMotos(e.target.value as SubcatMotos)}
-              >
-                {SUBCATS_MOTOS_VEHICULOS.map((s) => (
+            {subs && (
+              <select style={selectStyle()} value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)}>
+                <option value="">Subcategoría (opcional)</option>
+                {subs.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
@@ -413,7 +402,7 @@ export default function PublicarPage() {
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 900, color: COLORS.text }}>Fotos (máx. 5)</div>
               <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
-                Se subirán a Cloudinary automáticamente.
+                Se subirán automáticamente.
               </div>
 
               <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
