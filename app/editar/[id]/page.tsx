@@ -1,4 +1,3 @@
-// app/editar/[id]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -52,13 +51,18 @@ type ApiAnuncio = {
   descripcion: string;
   precio: number;
   provincia: string;
-  ciudad: string; // (en tu publicar se llama canton, pero en API ya normalizaste a ciudad)
+  ciudad: string;
   whatsapp: string;
   fotos: string[];
   categoria: string;
   subcategoria: string;
   createdAt: string;
   updatedAt?: string;
+
+  vehiculoAno?: number;
+  marchamoAlDia?: boolean;
+  dekraAlDia?: boolean;
+  dekraMes?: string;
 };
 
 function inputStyle(): React.CSSProperties {
@@ -109,6 +113,10 @@ function ghostBtn(disabled?: boolean): React.CSSProperties {
   };
 }
 
+function normalizeWs(x: any) {
+  return String(x ?? "").replace(/\D/g, "");
+}
+
 async function uploadToCloudinary(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
@@ -139,7 +147,7 @@ export default function EditarPage() {
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
   const [subcategoria, setSubcategoria] = useState<string>(SUBCATEGORIAS["Muebles"][0] || "Otros");
   const [descripcion, setDescripcion] = useState("");
-  const [whatsapp, setWhatsapp] = useState("");
+  const [whatsapp, setWhatsapp] = useState(""); // mostrado en UI
 
   // ✅ fotos existentes (URLs guardadas)
   const [fotosExistentes, setFotosExistentes] = useState<string[]>([]);
@@ -147,6 +155,12 @@ export default function EditarPage() {
   // ✅ fotos nuevas (Files) + previews
   const [filesNuevos, setFilesNuevos] = useState<File[]>([]);
   const [previewsNuevos, setPreviewsNuevos] = useState<string[]>([]);
+
+  // ✅ Vehículo (opcionales)
+  const [vehiculoAno, setVehiculoAno] = useState<string>("");
+  const [marchamoAlDia, setMarchamoAlDia] = useState<string>(""); // "", "si", "no"
+  const [dekraAlDia, setDekraAlDia] = useState<string>(""); // "", "si", "no"
+  const [dekraMes, setDekraMes] = useState<string>("");
 
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
@@ -164,7 +178,6 @@ export default function EditarPage() {
 
   useEffect(() => {
     return () => {
-      // cleanup al desmontar
       previewsNuevos.forEach((u) => {
         try {
           URL.revokeObjectURL(u);
@@ -198,7 +211,7 @@ export default function EditarPage() {
       const cat = ((a?.categoria as any) || "Muebles") as Categoria;
       setCategoria(cat);
 
-      const fallbackSub = (SUBCATEGORIAS[cat] && SUBCATEGORIAS[cat][0]) ? SUBCATEGORIAS[cat][0] : "Otros";
+      const fallbackSub = SUBCATEGORIAS[cat]?.[0] ? SUBCATEGORIAS[cat][0] : "Otros";
       setSubcategoria(String(a?.subcategoria ? a.subcategoria : fallbackSub));
 
       setDescripcion(String(a?.descripcion ?? ""));
@@ -207,6 +220,11 @@ export default function EditarPage() {
       setFotosExistentes(Array.isArray(a?.fotos) ? a.fotos : []);
       setFilesNuevos([]);
       limpiarPreviews([]);
+
+      setVehiculoAno(a?.vehiculoAno ? String(a.vehiculoAno) : "");
+      setMarchamoAlDia(a?.marchamoAlDia === true ? "si" : a?.marchamoAlDia === false ? "no" : "");
+      setDekraAlDia(a?.dekraAlDia === true ? "si" : a?.dekraAlDia === false ? "no" : "");
+      setDekraMes(String(a?.dekraMes ?? ""));
     } catch (e: any) {
       setErrorCarga(e?.message || "Error cargando anuncio.");
     } finally {
@@ -219,21 +237,15 @@ export default function EditarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Si cambias categoría, ajusta subcategoría si no existe en esa categoría
   useEffect(() => {
     const list = SUBCATEGORIAS[categoria] ?? ["Otros"];
-    if (!list.includes(subcategoria)) {
-      setSubcategoria(list[0] || "Otros");
-    }
+    if (!list.includes(subcategoria)) setSubcategoria(list[0] || "Otros");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoria]);
 
-  // Si cambias provincia, corrige ciudad si no está en el listado
   useEffect(() => {
     const list = CANTONES[provincia] ?? [];
-    if (list.length && !list.includes(ciudad)) {
-      setCiudad(list[0]);
-    }
+    if (list.length && !list.includes(ciudad)) setCiudad(list[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provincia]);
 
@@ -245,11 +257,9 @@ export default function EditarPage() {
     const incoming = e.target.files ? Array.from(e.target.files) : [];
     if (incoming.length === 0) return;
 
-    // Cuántas puedo añadir para no pasar de 5
     const cupo = Math.max(0, 5 - (fotosExistentes.length + filesNuevos.length));
     const slice = incoming.slice(0, cupo);
 
-    // límite 2MB por archivo
     for (const f of slice) {
       if (f.size > 2_000_000) {
         setError("Cada foto debe pesar menos de 2 MB.");
@@ -263,7 +273,6 @@ export default function EditarPage() {
     const nextPreviews = [...previewsNuevos, ...slice.map((f) => URL.createObjectURL(f))];
     limpiarPreviews(nextPreviews);
 
-    // reset input
     e.target.value = "";
   }
 
@@ -291,13 +300,14 @@ export default function EditarPage() {
       const precioNum = Number(precio);
       if (!Number.isFinite(precioNum) || precioNum <= 0) throw new Error("Pon un precio válido.");
 
-      const ws = whatsapp.replace(/\D/g, "");
-      if (ws.length < 8) throw new Error("WhatsApp es obligatorio (mínimo 8 dígitos).");
+      // 🔒 Confirmación propietaria por WhatsApp
+      const wsConfirm = prompt("Introduce tu WhatsApp para confirmar (solo números):") || "";
+      const wsClean = normalizeWs(wsConfirm);
+      if (!wsClean) throw new Error("Debes introducir tu WhatsApp.");
 
       const mod = moderarTexto({ titulo, descripcion, categoria });
       if (!mod.ok) throw new Error(mod.mensaje || "El anuncio no cumple normas.");
 
-      // ✅ Subir fotos nuevas (si hay)
       let nuevasUrls: string[] = [];
       if (filesNuevos.length > 0) {
         nuevasUrls = [];
@@ -307,10 +317,21 @@ export default function EditarPage() {
         }
       }
 
-      // ✅ fotos finales = existentes (tras quitar) + nuevas subidas
       const fotosFinales = [...fotosExistentes, ...nuevasUrls].slice(0, 5);
 
-      // ✅ ciudad: si en tu UI lo llamas canton, aquí mandamos ciudad (API)
+      const vehAnoNum =
+        vehiculoAno.trim() === "" ? undefined : Number(vehiculoAno.trim());
+      const vehiculoAnoFinal =
+        vehiculoAno.trim() === "" ? undefined : (Number.isFinite(vehAnoNum) ? vehAnoNum : undefined);
+
+      const marchamoFinal =
+        marchamoAlDia === "si" ? true : marchamoAlDia === "no" ? false : undefined;
+
+      const dekraFinal =
+        dekraAlDia === "si" ? true : dekraAlDia === "no" ? false : undefined;
+
+      const dekraMesFinal = dekraMes.trim() ? dekraMes.trim() : undefined;
+
       const payload = {
         titulo: titulo.trim(),
         precio: precioNum,
@@ -319,8 +340,17 @@ export default function EditarPage() {
         categoria,
         subcategoria,
         descripcion: descripcion.trim(),
-        whatsapp: ws,
+
+        // 🔒 este whatsapp se usa para validar en el API (debe coincidir con el del anuncio)
+        whatsapp: wsClean,
+
         fotos: fotosFinales,
+
+        // 🚗 opcionales
+        vehiculoAno: vehiculoAnoFinal,
+        marchamoAlDia: marchamoFinal,
+        dekraAlDia: dekraFinal,
+        dekraMes: dekraMesFinal,
       };
 
       const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, {
@@ -372,6 +402,8 @@ export default function EditarPage() {
       </main>
     );
   }
+
+  const esVehiculo = categoria === "Motos y vehículos";
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -450,6 +482,40 @@ export default function EditarPage() {
               </select>
             </div>
 
+            {esVehiculo && (
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 12, background: "#FBFCFF" }}>
+                <div style={{ fontWeight: 950, color: COLORS.text }}>Datos del vehículo</div>
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  <input
+                    style={inputStyle()}
+                    placeholder="Año del vehículo (ej: 2015)"
+                    value={vehiculoAno}
+                    onChange={(e) => setVehiculoAno(e.target.value)}
+                    inputMode="numeric"
+                  />
+
+                  <select style={selectStyle()} value={marchamoAlDia} onChange={(e) => setMarchamoAlDia(e.target.value)}>
+                    <option value="">Marchamo al día: —</option>
+                    <option value="si">Marchamo al día: Sí</option>
+                    <option value="no">Marchamo al día: No</option>
+                  </select>
+
+                  <select style={selectStyle()} value={dekraAlDia} onChange={(e) => setDekraAlDia(e.target.value)}>
+                    <option value="">DEKRA al día: —</option>
+                    <option value="si">DEKRA al día: Sí</option>
+                    <option value="no">DEKRA al día: No</option>
+                  </select>
+
+                  <input
+                    style={inputStyle()}
+                    placeholder="Mes DEKRA (ej: marzo)"
+                    value={dekraMes}
+                    onChange={(e) => setDekraMes(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
             <textarea
               style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }}
               placeholder="Descripción"
@@ -459,10 +525,12 @@ export default function EditarPage() {
 
             <input
               style={inputStyle()}
-              placeholder="WhatsApp (obligatorio) — ej: 8888-8888"
+              placeholder="WhatsApp (este es el del anuncio)"
               value={whatsapp}
               onChange={(e) => setWhatsapp(e.target.value)}
               inputMode="tel"
+              disabled
+              title="El WhatsApp del anuncio no se edita aquí. Se usa para validar propiedad."
             />
 
             {/* ✅ FOTOS */}
@@ -492,7 +560,6 @@ export default function EditarPage() {
                     gap: 10,
                   }}
                 >
-                  {/* Existentes */}
                   {fotosExistentes.map((src, i) => (
                     <div
                       key={`old-${i}`}
@@ -526,7 +593,6 @@ export default function EditarPage() {
                     </div>
                   ))}
 
-                  {/* Nuevas (previews) */}
                   {previewsNuevos.map((src, i) => (
                     <div
                       key={`new-${i}`}
@@ -570,19 +636,13 @@ export default function EditarPage() {
                 {guardando ? "Guardando..." : "Guardar cambios"}
               </button>
 
-              <button
-                type="button"
-                onClick={cargar}
-                disabled={guardando}
-                style={ghostBtn(guardando)}
-                title="Recarga del servidor (descarta cambios no guardados)"
-              >
+              <button type="button" onClick={cargar} disabled={guardando} style={ghostBtn(guardando)}>
                 Recargar
               </button>
             </div>
 
             <div style={{ marginTop: 6, fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
-              Al guardar, las fotos nuevas se suben y luego se actualiza el anuncio.
+              Al guardar, las fotos nuevas se suben y luego se actualiza el anuncio. Te pediremos tu WhatsApp para confirmar.
             </div>
           </form>
         </div>

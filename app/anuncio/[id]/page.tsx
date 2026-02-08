@@ -79,6 +79,10 @@ function btnPrimary(): React.CSSProperties {
   };
 }
 
+function normalizeWs(x: any) {
+  return String(x ?? "").replace(/\D/g, "");
+}
+
 export default function AnuncioPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -98,7 +102,7 @@ export default function AnuncioPage() {
       const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
 
-      if (!res.ok) throw new Error(data?.error || "Anuncio no encontrado");
+      if (!res.ok || !data?.ok) throw new Error(data?.error || "Anuncio no encontrado");
 
       setAnuncio(data?.anuncio || null);
     } catch (e: any) {
@@ -114,10 +118,35 @@ export default function AnuncioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const ws = anuncio?.whatsapp ? String(anuncio.whatsapp).replace(/\D/g, "") : "";
+  async function eliminar() {
+    const ws = prompt("Introduce tu WhatsApp para eliminar el anuncio (solo números):");
+    if (!ws) return;
+
+    const clean = normalizeWs(ws);
+    if (!clean) return;
+
+    const ok = confirm("¿Seguro que quieres eliminar este anuncio?");
+    if (!ok) return;
+
+    const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}?whatsapp=${clean}`, {
+      method: "DELETE",
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      alert(data?.error || "No se pudo eliminar");
+      return;
+    }
+
+    router.push("/");
+  }
+
+  const ws = anuncio?.whatsapp ? normalizeWs(anuncio.whatsapp) : "";
   const waHref = ws ? `https://wa.me/506${ws}` : "";
 
-  const esVehiculo = (anuncio?.categoria || "").toLowerCase().includes("motos") || (anuncio?.categoria || "").toLowerCase().includes("veh");
+  const esVehiculo =
+    (anuncio?.categoria || "").toLowerCase().includes("motos") ||
+    (anuncio?.categoria || "").toLowerCase().includes("veh");
 
   return (
     <main style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -128,7 +157,12 @@ export default function AnuncioPage() {
           </button>
 
           {waHref ? (
-            <a href={waHref} target="_blank" rel="noreferrer" style={{ ...btnPrimary(), background: "#16A34A", borderColor: "#16A34A" }}>
+            <a
+              href={waHref}
+              target="_blank"
+              rel="noreferrer"
+              style={{ ...btnPrimary(), background: "#16A34A", borderColor: "#16A34A" }}
+            >
               WhatsApp {ws}
             </a>
           ) : (
@@ -169,9 +203,19 @@ export default function AnuncioPage() {
                   </div>
                 </div>
 
-                <Link href={`/editar/${encodeURIComponent(anuncio.id)}`} style={btnPrimary()}>
-                  Editar
-                </Link>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <Link href={`/editar/${encodeURIComponent(anuncio.id)}`} style={btnPrimary()}>
+                    Editar
+                  </Link>
+
+                  <button
+                    onClick={eliminar}
+                    style={{ ...btnPrimary(), background: "#DC2626", borderColor: "#DC2626" }}
+                    type="button"
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
 
               <hr style={{ border: 0, borderTop: `1px solid ${COLORS.border}`, margin: "16px 0" }} />
@@ -201,16 +245,24 @@ export default function AnuncioPage() {
                     {anuncio.descripcion || "—"}
                   </div>
 
-                  {/* ✅ Aquí mostramos DEKRA/Marchamo si aplica */}
                   {esVehiculo && (
                     <div style={{ marginTop: 14, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 12, background: "#FBFCFF" }}>
                       <div style={{ fontWeight: 950, color: COLORS.text }}>Datos del vehículo</div>
 
                       <div style={{ marginTop: 8, display: "grid", gap: 6, color: COLORS.text, fontWeight: 850 }}>
-                        <div>Año: <b>{anuncio.vehiculoAno ?? "—"}</b></div>
-                        <div>Marchamo al día: <b>{anuncio.marchamoAlDia === true ? "Sí" : anuncio.marchamoAlDia === false ? "No" : "—"}</b></div>
-                        <div>DEKRA al día: <b>{anuncio.dekraAlDia === true ? "Sí" : anuncio.dekraAlDia === false ? "No" : "—"}</b></div>
-                        <div>Mes DEKRA: <b>{anuncio.dekraMes || "—"}</b></div>
+                        <div>
+                          Año: <b>{anuncio.vehiculoAno ?? "—"}</b>
+                        </div>
+                        <div>
+                          Marchamo al día:{" "}
+                          <b>{anuncio.marchamoAlDia === true ? "Sí" : anuncio.marchamoAlDia === false ? "No" : "—"}</b>
+                        </div>
+                        <div>
+                          DEKRA al día: <b>{anuncio.dekraAlDia === true ? "Sí" : anuncio.dekraAlDia === false ? "No" : "—"}</b>
+                        </div>
+                        <div>
+                          Mes DEKRA: <b>{anuncio.dekraMes || "—"}</b>
+                        </div>
                       </div>
                     </div>
                   )}
