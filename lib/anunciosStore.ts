@@ -26,6 +26,9 @@ export type Anuncio = {
   marchamoAlDia?: boolean;
   dekraAlDia?: boolean;
   dekraMes?: string;
+
+  // 🔐 Propiedad del anuncio (secreto)
+  ownerToken?: string;
 };
 
 const IDS_KEY = "puraventa:anuncios:ids";
@@ -67,64 +70,22 @@ function findLegacyById(id: string): Anuncio | null {
   return a ? (a as Anuncio) : null;
 }
 
-function normalize(a: any): Anuncio {
-  const id = String(a?.id ?? "");
-  const createdAt = String(a?.createdAt ?? a?.creadoEn ?? new Date().toISOString());
-
-  const ciudad = (a?.ciudad ?? a?.canton ?? "").toString().trim() || undefined;
-  const canton = (a?.canton ?? a?.ciudad ?? "").toString().trim() || undefined;
-
-  const out: Anuncio = {
-    id,
-    titulo: String(a?.titulo ?? "").trim(),
-    descripcion: String(a?.descripcion ?? "").trim(),
-    precio: Number(a?.precio ?? 0),
-
-    provincia: String(a?.provincia ?? "").trim(),
-    ciudad,
-    canton,
-
-    whatsapp: a?.whatsapp ? String(a.whatsapp) : undefined,
-    fotos: Array.isArray(a?.fotos) ? a.fotos.map(String) : [],
-
-    categoria: a?.categoria ? String(a.categoria).trim() : undefined,
-    subcategoria: a?.subcategoria ? String(a.subcategoria).trim() : undefined,
-
-    createdAt,
-    updatedAt: a?.updatedAt ? String(a.updatedAt) : undefined,
-
-    vehiculoAno:
-      a?.vehiculoAno === undefined || a?.vehiculoAno === null || a?.vehiculoAno === ""
-        ? undefined
-        : Number(a.vehiculoAno),
-    marchamoAlDia:
-      a?.marchamoAlDia === undefined || a?.marchamoAlDia === null || a?.marchamoAlDia === ""
-        ? undefined
-        : Boolean(a.marchamoAlDia),
-    dekraAlDia:
-      a?.dekraAlDia === undefined || a?.dekraAlDia === null || a?.dekraAlDia === ""
-        ? undefined
-        : Boolean(a.dekraAlDia),
-    dekraMes: a?.dekraMes ? String(a.dekraMes).trim() : undefined,
-  };
-
-  // saneo mínimo
-  if (!Number.isFinite(out.precio)) out.precio = 0;
-  if (!Number.isFinite(out.vehiculoAno as any)) out.vehiculoAno = undefined;
-
-  return out;
-}
-
-async function ensureInRedis(a: any) {
+async function ensureInRedis(a: Anuncio) {
   const redis = getRedis();
-  const normalized = normalize(a);
-  if (!normalized.id) return;
+  const id = String(a.id);
 
-  const id = normalized.id;
+  const createdAt = String((a as any).createdAt ?? (a as any).creadoEn ?? new Date().toISOString());
+
+  const normalized: Anuncio = {
+    ...a,
+    id,
+    createdAt,
+    ciudad: (a as any).ciudad ?? (a as any).canton ?? a.ciudad,
+    canton: (a as any).canton ?? (a as any).ciudad ?? a.canton,
+  };
 
   await redis.set(keyFor(id), normalized);
 
-  // mete el id en la lista si no está (sin duplicados)
   await redis.lrem(IDS_KEY, 0, id);
   await redis.lpush(IDS_KEY, id);
 }
@@ -135,13 +96,10 @@ export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
   const idsRaw = (await redis.lrange(IDS_KEY, 0, Math.max(0, limit - 1))) as unknown;
   const ids = (Array.isArray(idsRaw) ? idsRaw : []) as string[];
 
-  // Si Redis está vacío, intenta importar TODO el legacy (si existe)
   if (ids.length === 0) {
     const legacy = readLegacyAll();
     if (legacy.length > 0) {
-      for (const a of legacy) {
-        if (a?.id) await ensureInRedis(a);
-      }
+      for (const a of legacy) if (a?.id) await ensureInRedis(a);
       const ids2Raw = (await redis.lrange(IDS_KEY, 0, Math.max(0, limit - 1))) as unknown;
       const ids2 = (Array.isArray(ids2Raw) ? ids2Raw : []) as string[];
       return await listByIds(ids2);
@@ -159,9 +117,7 @@ async function listByIds(ids: string[]): Promise<Anuncio[]> {
   const raw = (await (redis as any).mget(...keys)) as unknown;
   const arr = (Array.isArray(raw) ? raw : []) as (Anuncio | null)[];
 
-  const out = arr.filter(Boolean).map((x) => normalize(x)) as Anuncio[];
-
-  // ordena por createdAt desc
+  const out = arr.filter(Boolean) as Anuncio[];
   out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
   return out;
 }
@@ -170,15 +126,14 @@ export async function getAnuncio(id: string): Promise<Anuncio | null> {
   const redis = getRedis();
   const key = keyFor(id);
 
-  const fromRedis = (await redis.get(key)) as any;
-  if (fromRedis?.id) return normalize(fromRedis);
+  const fromRedis = (await redis.get(key)) as Anuncio | null;
+  if (fromRedis?.id) return fromRedis;
 
-  // fallback legacy: si existe en data/anuncios.json, lo migramos y devolvemos
   const legacy = findLegacyById(id);
   if (legacy?.id) {
     await ensureInRedis(legacy);
-    const again = (await redis.get(key)) as any;
-    return again?.id ? normalize(again) : null;
+    const again = (await redis.get(key)) as Anuncio | null;
+    return again?.id ? again : null;
   }
 
   return null;
@@ -192,12 +147,12 @@ export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promis
   const current = await getAnuncio(id);
   if (!current) return null;
 
-  const updated: Anuncio = normalize({
+  const updated: Anuncio = {
     ...current,
     ...patch,
     id: String(current.id),
     updatedAt: new Date().toISOString(),
-  });
+  };
 
   await ensureInRedis(updated);
   return updated;

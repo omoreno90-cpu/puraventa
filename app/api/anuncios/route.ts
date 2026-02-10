@@ -1,16 +1,26 @@
 ﻿import { NextResponse } from "next/server";
 import { addAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
 
-export const runtime = "nodejs";
-
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
+}
+
+function makeOwnerToken() {
+  // token fuerte y simple
+  return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
 }
 
 export async function GET() {
   try {
     const anuncios = await listAnuncios(200);
-    return json({ ok: true, anuncios });
+
+    // 🔒 nunca expongas ownerToken en listados
+    const safe = anuncios.map((a) => {
+      const { ownerToken, ...rest } = a as any;
+      return rest;
+    });
+
+    return json({ ok: true, anuncios: safe });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
   }
@@ -24,15 +34,10 @@ export async function POST(req: Request) {
     const titulo = String(body?.titulo ?? "").trim();
     const descripcion = String(body?.descripcion ?? "").trim();
     const provincia = String(body?.provincia ?? "").trim();
-
-    // soporta ciudad o canton (compat)
-    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim() || undefined;
-    const canton = String(body?.canton ?? body?.ciudad ?? "").trim() || undefined;
-
-    const whatsapp = String(body?.whatsapp ?? "").trim() || undefined;
-    const categoria = String(body?.categoria ?? "").trim() || undefined;
-    const subcategoria = String(body?.subcategoria ?? "").trim() || undefined;
-
+    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim();
+    const whatsapp = String(body?.whatsapp ?? "").trim();
+    const categoria = String(body?.categoria ?? "").trim();
+    const subcategoria = String(body?.subcategoria ?? "").trim();
     const fotos = Array.isArray(body?.fotos) ? body.fotos.map(String) : [];
 
     const precioNum = Number(body?.precio);
@@ -59,6 +64,8 @@ export async function POST(req: Request) {
 
     const dekraMes = String(body?.dekraMes ?? "").trim() || undefined;
 
+    const ownerToken = makeOwnerToken();
+
     const anuncio: Anuncio = {
       id: crypto.randomUUID(),
       titulo,
@@ -66,24 +73,34 @@ export async function POST(req: Request) {
       precio: precioNum,
       provincia,
       ciudad,
-      canton,
       whatsapp,
       fotos,
-      categoria,
-      subcategoria,
+      categoria: categoria || undefined,
+      subcategoria: subcategoria || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: undefined,
 
-      vehiculoAno: Number.isFinite(vehiculoAno as any) ? vehiculoAno : undefined,
+      vehiculoAno,
       marchamoAlDia,
       dekraAlDia,
       dekraMes,
+
+      ownerToken,
     };
 
     await addAnuncio(anuncio);
 
+    // lista safe
     const anuncios = await listAnuncios(200);
-    return json({ ok: true, anuncio, anuncios });
+    const safe = anuncios.map((a) => {
+      const { ownerToken, ...rest } = a as any;
+      return rest;
+    });
+
+    // 🔒 Devolvemos ownerToken SOLO en respuesta del POST
+    // para que el frontend lo guarde en localStorage.
+    const { ownerToken: _ot, ...safeAnuncio } = anuncio as any;
+    return json({ ok: true, anuncio: safeAnuncio, ownerToken, anuncios: safe });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error creando anuncio" }, 500);
   }

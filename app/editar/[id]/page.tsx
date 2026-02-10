@@ -1,3 +1,4 @@
+// app/editar/[id]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -113,8 +114,8 @@ function ghostBtn(disabled?: boolean): React.CSSProperties {
   };
 }
 
-function normalizeWs(x: any) {
-  return String(x ?? "").replace(/\D/g, "");
+function tokenKey(id: string) {
+  return `puraventa:ownerToken:${id}`;
 }
 
 async function uploadToCloudinary(file: File): Promise<string> {
@@ -147,20 +148,11 @@ export default function EditarPage() {
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
   const [subcategoria, setSubcategoria] = useState<string>(SUBCATEGORIAS["Muebles"][0] || "Otros");
   const [descripcion, setDescripcion] = useState("");
-  const [whatsapp, setWhatsapp] = useState(""); // mostrado en UI
+  const [whatsapp, setWhatsapp] = useState("");
 
-  // ✅ fotos existentes (URLs guardadas)
   const [fotosExistentes, setFotosExistentes] = useState<string[]>([]);
-
-  // ✅ fotos nuevas (Files) + previews
   const [filesNuevos, setFilesNuevos] = useState<File[]>([]);
   const [previewsNuevos, setPreviewsNuevos] = useState<string[]>([]);
-
-  // ✅ Vehículo (opcionales)
-  const [vehiculoAno, setVehiculoAno] = useState<string>("");
-  const [marchamoAlDia, setMarchamoAlDia] = useState<string>(""); // "", "si", "no"
-  const [dekraAlDia, setDekraAlDia] = useState<string>(""); // "", "si", "no"
-  const [dekraMes, setDekraMes] = useState<string>("");
 
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
@@ -196,7 +188,6 @@ export default function EditarPage() {
     try {
       const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Anuncio no encontrado");
 
       const a = json.anuncio as ApiAnuncio;
@@ -211,7 +202,7 @@ export default function EditarPage() {
       const cat = ((a?.categoria as any) || "Muebles") as Categoria;
       setCategoria(cat);
 
-      const fallbackSub = SUBCATEGORIAS[cat]?.[0] ? SUBCATEGORIAS[cat][0] : "Otros";
+      const fallbackSub = (SUBCATEGORIAS[cat] && SUBCATEGORIAS[cat][0]) ? SUBCATEGORIAS[cat][0] : "Otros";
       setSubcategoria(String(a?.subcategoria ? a.subcategoria : fallbackSub));
 
       setDescripcion(String(a?.descripcion ?? ""));
@@ -220,11 +211,6 @@ export default function EditarPage() {
       setFotosExistentes(Array.isArray(a?.fotos) ? a.fotos : []);
       setFilesNuevos([]);
       limpiarPreviews([]);
-
-      setVehiculoAno(a?.vehiculoAno ? String(a.vehiculoAno) : "");
-      setMarchamoAlDia(a?.marchamoAlDia === true ? "si" : a?.marchamoAlDia === false ? "no" : "");
-      setDekraAlDia(a?.dekraAlDia === true ? "si" : a?.dekraAlDia === false ? "no" : "");
-      setDekraMes(String(a?.dekraMes ?? ""));
     } catch (e: any) {
       setErrorCarga(e?.message || "Error cargando anuncio.");
     } finally {
@@ -294,43 +280,25 @@ export default function EditarPage() {
     setGuardando(true);
 
     try {
+      // 🔐 requiere token local
+      const ownerToken = (localStorage.getItem(tokenKey(id)) || "").trim();
+      if (!ownerToken) throw new Error("No tienes el código de propietario en este navegador (no puedes editar).");
+
       if (titulo.trim().length < 5) throw new Error("Pon un título más descriptivo (mín. 5 caracteres).");
       if (descripcion.trim().length < 10) throw new Error("Añade una descripción (mín. 10 caracteres).");
 
       const precioNum = Number(precio);
       if (!Number.isFinite(precioNum) || precioNum <= 0) throw new Error("Pon un precio válido.");
 
-      // 🔒 Confirmación propietaria por WhatsApp
-      const wsConfirm = prompt("Introduce tu WhatsApp para confirmar (solo números):") || "";
-      const wsClean = normalizeWs(wsConfirm);
-      if (!wsClean) throw new Error("Debes introducir tu WhatsApp.");
-
       const mod = moderarTexto({ titulo, descripcion, categoria });
       if (!mod.ok) throw new Error(mod.mensaje || "El anuncio no cumple normas.");
 
       let nuevasUrls: string[] = [];
       if (filesNuevos.length > 0) {
-        nuevasUrls = [];
-        for (const f of filesNuevos) {
-          const url = await uploadToCloudinary(f);
-          nuevasUrls.push(url);
-        }
+        for (const f of filesNuevos) nuevasUrls.push(await uploadToCloudinary(f));
       }
 
       const fotosFinales = [...fotosExistentes, ...nuevasUrls].slice(0, 5);
-
-      const vehAnoNum =
-        vehiculoAno.trim() === "" ? undefined : Number(vehiculoAno.trim());
-      const vehiculoAnoFinal =
-        vehiculoAno.trim() === "" ? undefined : (Number.isFinite(vehAnoNum) ? vehAnoNum : undefined);
-
-      const marchamoFinal =
-        marchamoAlDia === "si" ? true : marchamoAlDia === "no" ? false : undefined;
-
-      const dekraFinal =
-        dekraAlDia === "si" ? true : dekraAlDia === "no" ? false : undefined;
-
-      const dekraMesFinal = dekraMes.trim() ? dekraMes.trim() : undefined;
 
       const payload = {
         titulo: titulo.trim(),
@@ -340,22 +308,16 @@ export default function EditarPage() {
         categoria,
         subcategoria,
         descripcion: descripcion.trim(),
-
-        // 🔒 este whatsapp se usa para validar en el API (debe coincidir con el del anuncio)
-        whatsapp: wsClean,
-
+        whatsapp: String(whatsapp ?? "").trim(),
         fotos: fotosFinales,
-
-        // 🚗 opcionales
-        vehiculoAno: vehiculoAnoFinal,
-        marchamoAlDia: marchamoFinal,
-        dekraAlDia: dekraFinal,
-        dekraMes: dekraMesFinal,
       };
 
       const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-owner-token": ownerToken,
+        },
         body: JSON.stringify(payload),
       });
 
@@ -403,8 +365,6 @@ export default function EditarPage() {
     );
   }
 
-  const esVehiculo = categoria === "Motos y vehículos";
-
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 16px 60px" }}>
@@ -425,7 +385,7 @@ export default function EditarPage() {
           </div>
 
           <p style={{ marginTop: 8, color: COLORS.subtext, lineHeight: 1.5, fontWeight: 600 }}>
-            Edita y guarda cambios. Puedes <b>quitar</b> fotos existentes y <b>añadir</b> fotos nuevas.
+            Solo se puede editar en el navegador que tenga el <b>código de propietario</b>.
           </p>
 
           <form onSubmit={guardar} style={{ marginTop: 18, display: "grid", gap: 12 }}>
@@ -443,10 +403,7 @@ export default function EditarPage() {
               <select
                 style={selectStyle()}
                 value={provincia}
-                onChange={(e) => {
-                  const p = e.target.value as (typeof PROVINCIAS)[number];
-                  setProvincia(p);
-                }}
+                onChange={(e) => setProvincia(e.target.value as (typeof PROVINCIAS)[number])}
               >
                 {PROVINCIAS.map((p) => (
                   <option key={p} value={p}>
@@ -482,40 +439,6 @@ export default function EditarPage() {
               </select>
             </div>
 
-            {esVehiculo && (
-              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 12, background: "#FBFCFF" }}>
-                <div style={{ fontWeight: 950, color: COLORS.text }}>Datos del vehículo</div>
-                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                  <input
-                    style={inputStyle()}
-                    placeholder="Año del vehículo (ej: 2015)"
-                    value={vehiculoAno}
-                    onChange={(e) => setVehiculoAno(e.target.value)}
-                    inputMode="numeric"
-                  />
-
-                  <select style={selectStyle()} value={marchamoAlDia} onChange={(e) => setMarchamoAlDia(e.target.value)}>
-                    <option value="">Marchamo al día: —</option>
-                    <option value="si">Marchamo al día: Sí</option>
-                    <option value="no">Marchamo al día: No</option>
-                  </select>
-
-                  <select style={selectStyle()} value={dekraAlDia} onChange={(e) => setDekraAlDia(e.target.value)}>
-                    <option value="">DEKRA al día: —</option>
-                    <option value="si">DEKRA al día: Sí</option>
-                    <option value="no">DEKRA al día: No</option>
-                  </select>
-
-                  <input
-                    style={inputStyle()}
-                    placeholder="Mes DEKRA (ej: marzo)"
-                    value={dekraMes}
-                    onChange={(e) => setDekraMes(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
-
             <textarea
               style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }}
               placeholder="Descripción"
@@ -525,21 +448,15 @@ export default function EditarPage() {
 
             <input
               style={inputStyle()}
-              placeholder="WhatsApp (este es el del anuncio)"
+              placeholder="WhatsApp"
               value={whatsapp}
               onChange={(e) => setWhatsapp(e.target.value)}
               inputMode="tel"
-              disabled
-              title="El WhatsApp del anuncio no se edita aquí. Se usa para validar propiedad."
             />
 
-            {/* ✅ FOTOS */}
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 900, color: COLORS.text }}>
                 Fotos (máx. 5) — actuales: <b>{totalFotos}</b>/5
-              </div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
-                Puedes quitar las actuales y/o añadir nuevas (2MB máx por foto).
               </div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -552,41 +469,14 @@ export default function EditarPage() {
               </div>
 
               {(fotosExistentes.length > 0 || previewsNuevos.length > 0) && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
-                    gap: 10,
-                  }}
-                >
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
                   {fotosExistentes.map((src, i) => (
-                    <div
-                      key={`old-${i}`}
-                      style={{
-                        border: `1px solid ${COLORS.border}`,
-                        borderRadius: 14,
-                        overflow: "hidden",
-                        background: COLORS.card,
-                        position: "relative",
-                      }}
-                      title="Foto existente"
-                    >
+                    <div key={`old-${i}`} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: COLORS.card, position: "relative" }}>
                       <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
                       <button
                         type="button"
                         onClick={() => quitarExistente(i)}
-                        style={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          borderRadius: 999,
-                          border: `1px solid ${COLORS.border}`,
-                          background: "rgba(255,255,255,0.95)",
-                          padding: "6px 10px",
-                          fontWeight: 900,
-                          cursor: "pointer",
-                        }}
+                        style={{ position: "absolute", top: 8, right: 8, borderRadius: 999, border: `1px solid ${COLORS.border}`, background: "rgba(255,255,255,0.95)", padding: "6px 10px", fontWeight: 900, cursor: "pointer" }}
                       >
                         Quitar
                       </button>
@@ -594,32 +484,12 @@ export default function EditarPage() {
                   ))}
 
                   {previewsNuevos.map((src, i) => (
-                    <div
-                      key={`new-${i}`}
-                      style={{
-                        border: `1px solid ${COLORS.border}`,
-                        borderRadius: 14,
-                        overflow: "hidden",
-                        background: COLORS.card,
-                        position: "relative",
-                      }}
-                      title="Foto nueva (aún no subida)"
-                    >
+                    <div key={`new-${i}`} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: COLORS.card, position: "relative" }}>
                       <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
                       <button
                         type="button"
                         onClick={() => quitarNuevo(i)}
-                        style={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          borderRadius: 999,
-                          border: `1px solid ${COLORS.border}`,
-                          background: "rgba(255,255,255,0.95)",
-                          padding: "6px 10px",
-                          fontWeight: 900,
-                          cursor: "pointer",
-                        }}
+                        style={{ position: "absolute", top: 8, right: 8, borderRadius: 999, border: `1px solid ${COLORS.border}`, background: "rgba(255,255,255,0.95)", padding: "6px 10px", fontWeight: 900, cursor: "pointer" }}
                       >
                         Quitar
                       </button>
@@ -639,10 +509,6 @@ export default function EditarPage() {
               <button type="button" onClick={cargar} disabled={guardando} style={ghostBtn(guardando)}>
                 Recargar
               </button>
-            </div>
-
-            <div style={{ marginTop: 6, fontSize: 12, color: COLORS.subtext, fontWeight: 600 }}>
-              Al guardar, las fotos nuevas se suben y luego se actualiza el anuncio. Te pediremos tu WhatsApp para confirmar.
             </div>
           </form>
         </div>

@@ -19,7 +19,6 @@ type Anuncio = {
   createdAt?: string;
   updatedAt?: string;
 
-  // coches/motos
   vehiculoAno?: number;
   marchamoAlDia?: boolean;
   dekraAlDia?: boolean;
@@ -34,7 +33,6 @@ const COLORS = {
   text: "#0F172A",
   subtext: "#64748B",
   danger: "#DC2626",
-  success: "#16A34A",
 };
 
 function card(): React.CSSProperties {
@@ -79,8 +77,8 @@ function btnPrimary(): React.CSSProperties {
   };
 }
 
-function normalizeWs(x: any) {
-  return String(x ?? "").replace(/\D/g, "");
+function tokenKey(id: string) {
+  return `puraventa:ownerToken:${id}`;
 }
 
 export default function AnuncioPage() {
@@ -91,6 +89,17 @@ export default function AnuncioPage() {
   const [anuncio, setAnuncio] = useState<Anuncio | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [hasToken, setHasToken] = useState(false);
+
+  function refreshHasToken() {
+    try {
+      const t = localStorage.getItem(tokenKey(id));
+      setHasToken(Boolean(t && t.trim().length > 0));
+    } catch {
+      setHasToken(false);
+    }
+  }
 
   async function load() {
     if (!id) return;
@@ -115,21 +124,43 @@ export default function AnuncioPage() {
 
   useEffect(() => {
     load();
+    refreshHasToken();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const ws = anuncio?.whatsapp ? String(anuncio.whatsapp).replace(/\D/g, "") : "";
+  const waHref = ws ? `https://wa.me/506${ws}` : "";
+
+  const esVehiculo =
+    (anuncio?.categoria || "").toLowerCase().includes("motos") ||
+    (anuncio?.categoria || "").toLowerCase().includes("veh");
+
+  function pegarToken() {
+    const t = prompt("Pega tu código de propietario (ownerToken):");
+    if (!t) return;
+    try {
+      localStorage.setItem(tokenKey(id), t.trim());
+      refreshHasToken();
+      alert("Código guardado en este navegador. Ya puedes editar/eliminar.");
+    } catch {
+      alert("No se pudo guardar el código en este navegador.");
+    }
+  }
+
   async function eliminar() {
-    const ws = prompt("Introduce tu WhatsApp para eliminar el anuncio (solo números):");
-    if (!ws) return;
-
-    const clean = normalizeWs(ws);
-    if (!clean) return;
-
+    if (!id) return;
     const ok = confirm("¿Seguro que quieres eliminar este anuncio?");
     if (!ok) return;
 
-    const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}?whatsapp=${clean}`, {
+    const token = localStorage.getItem(tokenKey(id)) || "";
+    if (!token.trim()) {
+      alert("No tienes el código de propietario en este navegador.");
+      return;
+    }
+
+    const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, {
       method: "DELETE",
+      headers: { "x-owner-token": token.trim() },
     });
 
     const data = await res.json().catch(() => ({}));
@@ -140,13 +171,6 @@ export default function AnuncioPage() {
 
     router.push("/");
   }
-
-  const ws = anuncio?.whatsapp ? normalizeWs(anuncio.whatsapp) : "";
-  const waHref = ws ? `https://wa.me/506${ws}` : "";
-
-  const esVehiculo =
-    (anuncio?.categoria || "").toLowerCase().includes("motos") ||
-    (anuncio?.categoria || "").toLowerCase().includes("veh");
 
   return (
     <main style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -163,7 +187,7 @@ export default function AnuncioPage() {
               rel="noreferrer"
               style={{ ...btnPrimary(), background: "#16A34A", borderColor: "#16A34A" }}
             >
-              WhatsApp {ws}
+              Contactar por WhatsApp
             </a>
           ) : (
             <span style={{ ...btn(), cursor: "default", color: COLORS.subtext }}>WhatsApp (no disponible)</span>
@@ -204,17 +228,24 @@ export default function AnuncioPage() {
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <Link href={`/editar/${encodeURIComponent(anuncio.id)}`} style={btnPrimary()}>
-                    Editar
-                  </Link>
-
-                  <button
-                    onClick={eliminar}
-                    style={{ ...btnPrimary(), background: "#DC2626", borderColor: "#DC2626" }}
-                    type="button"
-                  >
-                    Eliminar
-                  </button>
+                  {!hasToken ? (
+                    <button onClick={pegarToken} style={btnPrimary()} type="button">
+                      Soy el dueño (pegar código)
+                    </button>
+                  ) : (
+                    <>
+                      <Link href={`/editar/${encodeURIComponent(anuncio.id)}`} style={btnPrimary()}>
+                        Editar
+                      </Link>
+                      <button
+                        onClick={eliminar}
+                        style={{ ...btnPrimary(), background: "#DC2626", borderColor: "#DC2626" }}
+                        type="button"
+                      >
+                        Eliminar
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -250,24 +281,21 @@ export default function AnuncioPage() {
                       <div style={{ fontWeight: 950, color: COLORS.text }}>Datos del vehículo</div>
 
                       <div style={{ marginTop: 8, display: "grid", gap: 6, color: COLORS.text, fontWeight: 850 }}>
-                        <div>
-                          Año: <b>{anuncio.vehiculoAno ?? "—"}</b>
-                        </div>
-                        <div>
-                          Marchamo al día:{" "}
-                          <b>{anuncio.marchamoAlDia === true ? "Sí" : anuncio.marchamoAlDia === false ? "No" : "—"}</b>
-                        </div>
-                        <div>
-                          DEKRA al día: <b>{anuncio.dekraAlDia === true ? "Sí" : anuncio.dekraAlDia === false ? "No" : "—"}</b>
-                        </div>
-                        <div>
-                          Mes DEKRA: <b>{anuncio.dekraMes || "—"}</b>
-                        </div>
+                        <div>Año: <b>{anuncio.vehiculoAno ?? "—"}</b></div>
+                        <div>Marchamo al día: <b>{anuncio.marchamoAlDia === true ? "Sí" : anuncio.marchamoAlDia === false ? "No" : "—"}</b></div>
+                        <div>DEKRA al día: <b>{anuncio.dekraAlDia === true ? "Sí" : anuncio.dekraAlDia === false ? "No" : "—"}</b></div>
+                        <div>Mes DEKRA: <b>{anuncio.dekraMes || "—"}</b></div>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
+
+              {!hasToken && (
+                <div style={{ marginTop: 14, color: COLORS.subtext, fontWeight: 800, fontSize: 13 }}>
+                  Para editar o eliminar, necesitas el <b>código de propietario</b> (solo lo tiene quien publicó).
+                </div>
+              )}
             </div>
           )}
         </div>

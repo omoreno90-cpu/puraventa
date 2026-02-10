@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteAnuncio, getAnuncio, updateAnuncio } from "@/lib/anunciosStore";
+import { deleteAnuncio, getAnuncio, updateAnuncio, type Anuncio } from "@/lib/anunciosStore";
 
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
@@ -8,8 +8,13 @@ function json(data: any, status = 200) {
 // ✅ Next 16 validator: params como Promise
 type Ctx = { params: Promise<{ id: string }> };
 
-function normalizeWs(x: any) {
-  return String(x ?? "").replace(/\D/g, "");
+function publicAnuncio(a: Anuncio) {
+  const { ownerToken, ...rest } = a as any;
+  return rest as Anuncio;
+}
+
+function readOwnerToken(req: NextRequest) {
+  return String(req.headers.get("x-owner-token") || "").trim();
 }
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
@@ -18,7 +23,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     const anuncio = await getAnuncio(String(id));
 
     if (!anuncio) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
-    return json({ ok: true, anuncio });
+    return json({ ok: true, anuncio: publicAnuncio(anuncio) });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error" }, 500);
   }
@@ -32,18 +37,21 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const existing = await getAnuncio(String(id));
     if (!existing) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
 
-    // 🔒 Solo el dueño (whatsapp) puede editar
-    const wsOwner = normalizeWs(existing.whatsapp);
-    const wsBody = normalizeWs(body?.whatsapp);
-
-    if (!wsOwner || !wsBody || wsOwner !== wsBody) {
-      return json({ ok: false, error: "No autorizado. WhatsApp incorrecto." }, 403);
+    const token = readOwnerToken(req);
+    if (!existing.ownerToken) {
+      return json({ ok: false, error: "Este anuncio es antiguo y no tiene token. Re-publica el anuncio." }, 409);
     }
+    if (!token || token !== existing.ownerToken) {
+      return json({ ok: false, error: "No autorizado." }, 403);
+    }
+
+    // 🔒 No permitir cambiar ownerToken por PATCH
+    if ((body as any)?.ownerToken) delete (body as any).ownerToken;
 
     const updated = await updateAnuncio(String(id), body);
     if (!updated) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
 
-    return json({ ok: true, anuncio: updated });
+    return json({ ok: true, anuncio: publicAnuncio(updated) });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error" }, 500);
   }
@@ -56,12 +64,12 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const existing = await getAnuncio(String(id));
     if (!existing) return json({ ok: false, error: "Anuncio no encontrado" }, 404);
 
-    // 🔒 WhatsApp por query: /api/anuncios/:id?whatsapp=88888888
-    const wsOwner = normalizeWs(existing.whatsapp);
-    const wsQuery = normalizeWs(req.nextUrl.searchParams.get("whatsapp"));
-
-    if (!wsOwner || !wsQuery || wsOwner !== wsQuery) {
-      return json({ ok: false, error: "No autorizado. WhatsApp incorrecto." }, 403);
+    const token = readOwnerToken(req);
+    if (!existing.ownerToken) {
+      return json({ ok: false, error: "Este anuncio es antiguo y no tiene token. Re-publica el anuncio." }, 409);
+    }
+    if (!token || token !== existing.ownerToken) {
+      return json({ ok: false, error: "No autorizado." }, 403);
     }
 
     await deleteAnuncio(String(id));
