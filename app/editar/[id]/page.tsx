@@ -1,4 +1,3 @@
-// app/editar/[id]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -59,11 +58,6 @@ type ApiAnuncio = {
   subcategoria: string;
   createdAt: string;
   updatedAt?: string;
-
-  vehiculoAno?: number;
-  marchamoAlDia?: boolean;
-  dekraAlDia?: boolean;
-  dekraMes?: string;
 };
 
 function inputStyle(): React.CSSProperties {
@@ -101,6 +95,18 @@ function primaryBtn(disabled?: boolean): React.CSSProperties {
   };
 }
 
+function dangerBtn(disabled?: boolean): React.CSSProperties {
+  return {
+    padding: "12px 16px",
+    borderRadius: 14,
+    border: `1px solid ${COLORS.danger}`,
+    background: disabled ? COLORS.border : COLORS.danger,
+    color: disabled ? "#7A8193" : "white",
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
+
 function ghostBtn(disabled?: boolean): React.CSSProperties {
   return {
     padding: "10px 14px",
@@ -112,10 +118,6 @@ function ghostBtn(disabled?: boolean): React.CSSProperties {
     color: COLORS.text,
     opacity: disabled ? 0.6 : 1,
   };
-}
-
-function tokenKey(id: string) {
-  return `puraventa:ownerToken:${id}`;
 }
 
 async function uploadToCloudinary(file: File): Promise<string> {
@@ -150,12 +152,16 @@ export default function EditarPage() {
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
 
+  // 🔐 código propietario (obligatorio para guardar/borrar)
+  const [ownerToken, setOwnerToken] = useState("");
+
   const [fotosExistentes, setFotosExistentes] = useState<string[]>([]);
   const [filesNuevos, setFilesNuevos] = useState<File[]>([]);
   const [previewsNuevos, setPreviewsNuevos] = useState<string[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [borrando, setBorrando] = useState(false);
 
   const cantonesDisponibles = useMemo(() => CANTONES[provincia] ?? [], [provincia]);
 
@@ -188,6 +194,7 @@ export default function EditarPage() {
     try {
       const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Anuncio no encontrado");
 
       const a = json.anuncio as ApiAnuncio;
@@ -202,7 +209,8 @@ export default function EditarPage() {
       const cat = ((a?.categoria as any) || "Muebles") as Categoria;
       setCategoria(cat);
 
-      const fallbackSub = (SUBCATEGORIAS[cat] && SUBCATEGORIAS[cat][0]) ? SUBCATEGORIAS[cat][0] : "Otros";
+      const fallbackSub =
+        SUBCATEGORIAS[cat] && SUBCATEGORIAS[cat][0] ? SUBCATEGORIAS[cat][0] : "Otros";
       setSubcategoria(String(a?.subcategoria ? a.subcategoria : fallbackSub));
 
       setDescripcion(String(a?.descripcion ?? ""));
@@ -276,13 +284,13 @@ export default function EditarPage() {
   async function guardar(e: React.FormEvent) {
     e.preventDefault();
     if (guardando) return;
+
     setError(null);
     setGuardando(true);
 
     try {
-      // 🔐 requiere token local
-      const ownerToken = (localStorage.getItem(tokenKey(id)) || "").trim();
-      if (!ownerToken) throw new Error("No tienes el código de propietario en este navegador (no puedes editar).");
+      const token = ownerToken.trim();
+      if (token.length < 6) throw new Error("Pon tu código de propietario (el que te salió al publicar).");
 
       if (titulo.trim().length < 5) throw new Error("Pon un título más descriptivo (mín. 5 caracteres).");
       if (descripcion.trim().length < 10) throw new Error("Añade una descripción (mín. 10 caracteres).");
@@ -290,12 +298,19 @@ export default function EditarPage() {
       const precioNum = Number(precio);
       if (!Number.isFinite(precioNum) || precioNum <= 0) throw new Error("Pon un precio válido.");
 
+      const ws = whatsapp.replace(/\D/g, "");
+      if (ws.length < 8) throw new Error("WhatsApp es obligatorio (mínimo 8 dígitos).");
+
       const mod = moderarTexto({ titulo, descripcion, categoria });
       if (!mod.ok) throw new Error(mod.mensaje || "El anuncio no cumple normas.");
 
       let nuevasUrls: string[] = [];
       if (filesNuevos.length > 0) {
-        for (const f of filesNuevos) nuevasUrls.push(await uploadToCloudinary(f));
+        nuevasUrls = [];
+        for (const f of filesNuevos) {
+          const url = await uploadToCloudinary(f);
+          nuevasUrls.push(url);
+        }
       }
 
       const fotosFinales = [...fotosExistentes, ...nuevasUrls].slice(0, 5);
@@ -308,7 +323,7 @@ export default function EditarPage() {
         categoria,
         subcategoria,
         descripcion: descripcion.trim(),
-        whatsapp: String(whatsapp ?? "").trim(),
+        whatsapp: ws,
         fotos: fotosFinales,
       };
 
@@ -316,7 +331,7 @@ export default function EditarPage() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "x-owner-token": ownerToken,
+          "x-owner-token": token,
         },
         body: JSON.stringify(payload),
       });
@@ -329,6 +344,35 @@ export default function EditarPage() {
       setError(err?.message || "Error al guardar.");
     } finally {
       setGuardando(false);
+    }
+  }
+
+  async function eliminar() {
+    if (borrando) return;
+
+    setError(null);
+    setBorrando(true);
+
+    try {
+      const token = ownerToken.trim();
+      if (token.length < 6) throw new Error("Pon tu código de propietario para eliminar.");
+
+      const ok = confirm("¿Seguro que quieres ELIMINAR este anuncio? No se puede deshacer.");
+      if (!ok) return;
+
+      const res = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "x-owner-token": token },
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || "Error eliminando anuncio");
+
+      router.push("/");
+    } catch (e: any) {
+      setError(e?.message || "Error eliminando.");
+    } finally {
+      setBorrando(false);
     }
   }
 
@@ -352,7 +396,7 @@ export default function EditarPage() {
             <div style={{ fontWeight: 900, color: COLORS.danger }}>Anuncio no encontrado.</div>
             <div style={{ marginTop: 8, color: COLORS.subtext, fontWeight: 700 }}>{errorCarga}</div>
             <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={cargar} style={primaryBtn()}>
+              <button onClick={cargar} style={primaryBtn()} type="button">
                 Reintentar
               </button>
               <Link href="/" style={{ ...ghostBtn(), textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
@@ -385,25 +429,30 @@ export default function EditarPage() {
           </div>
 
           <p style={{ marginTop: 8, color: COLORS.subtext, lineHeight: 1.5, fontWeight: 600 }}>
-            Solo se puede editar en el navegador que tenga el <b>código de propietario</b>.
+            Para editar o eliminar necesitas el <b>código de propietario</b> (te salió al publicar).
           </p>
 
           <form onSubmit={guardar} style={{ marginTop: 18, display: "grid", gap: 12 }}>
-            <input style={inputStyle()} placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
-
             <input
               style={inputStyle()}
-              placeholder="Precio (₡)"
-              value={precio}
-              onChange={(e) => setPrecio(e.target.value)}
-              inputMode="numeric"
+              placeholder="Código de propietario (obligatorio)"
+              value={ownerToken}
+              onChange={(e) => setOwnerToken(e.target.value)}
+              autoComplete="off"
             />
+
+            <input style={inputStyle()} placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+
+            <input style={inputStyle()} placeholder="Precio (₡)" value={precio} onChange={(e) => setPrecio(e.target.value)} inputMode="numeric" />
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <select
                 style={selectStyle()}
                 value={provincia}
-                onChange={(e) => setProvincia(e.target.value as (typeof PROVINCIAS)[number])}
+                onChange={(e) => {
+                  const p = e.target.value as (typeof PROVINCIAS)[number];
+                  setProvincia(p);
+                }}
               >
                 {PROVINCIAS.map((p) => (
                   <option key={p} value={p}>
@@ -439,24 +488,16 @@ export default function EditarPage() {
               </select>
             </div>
 
-            <textarea
-              style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }}
-              placeholder="Descripción"
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-            />
+            <textarea style={{ ...inputStyle(), minHeight: 110, resize: "vertical" }} placeholder="Descripción" value={descripcion} onChange={(e) => setDescripcion(e.target.value)} />
 
-            <input
-              style={inputStyle()}
-              placeholder="WhatsApp"
-              value={whatsapp}
-              onChange={(e) => setWhatsapp(e.target.value)}
-              inputMode="tel"
-            />
+            <input style={inputStyle()} placeholder="WhatsApp (obligatorio) — ej: 8888-8888" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} inputMode="tel" />
 
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 900, color: COLORS.text }}>
-                Fotos (máx. 5) — actuales: <b>{totalFotos}</b>/5
+                Fotos (máx. 5) — actuales: <b>{fotosExistentes.length + filesNuevos.length}</b>/5
+              </div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
+                Puedes quitar las actuales y/o añadir nuevas (2MB máx por foto).
               </div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -471,12 +512,32 @@ export default function EditarPage() {
               {(fotosExistentes.length > 0 || previewsNuevos.length > 0) && (
                 <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
                   {fotosExistentes.map((src, i) => (
-                    <div key={`old-${i}`} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: COLORS.card, position: "relative" }}>
+                    <div
+                      key={`old-${i}`}
+                      style={{
+                        border: `1px solid ${COLORS.border}`,
+                        borderRadius: 14,
+                        overflow: "hidden",
+                        background: COLORS.card,
+                        position: "relative",
+                      }}
+                      title="Foto existente"
+                    >
                       <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
                       <button
                         type="button"
                         onClick={() => quitarExistente(i)}
-                        style={{ position: "absolute", top: 8, right: 8, borderRadius: 999, border: `1px solid ${COLORS.border}`, background: "rgba(255,255,255,0.95)", padding: "6px 10px", fontWeight: 900, cursor: "pointer" }}
+                        style={{
+                          position: "absolute",
+                          top: 8,
+                          right: 8,
+                          borderRadius: 999,
+                          border: `1px solid ${COLORS.border}`,
+                          background: "rgba(255,255,255,0.95)",
+                          padding: "6px 10px",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
                       >
                         Quitar
                       </button>
@@ -484,12 +545,32 @@ export default function EditarPage() {
                   ))}
 
                   {previewsNuevos.map((src, i) => (
-                    <div key={`new-${i}`} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: COLORS.card, position: "relative" }}>
+                    <div
+                      key={`new-${i}`}
+                      style={{
+                        border: `1px solid ${COLORS.border}`,
+                        borderRadius: 14,
+                        overflow: "hidden",
+                        background: COLORS.card,
+                        position: "relative",
+                      }}
+                      title="Foto nueva (aún no subida)"
+                    >
                       <div style={{ height: 110, background: `url(${src}) center/cover no-repeat` }} />
                       <button
                         type="button"
                         onClick={() => quitarNuevo(i)}
-                        style={{ position: "absolute", top: 8, right: 8, borderRadius: 999, border: `1px solid ${COLORS.border}`, background: "rgba(255,255,255,0.95)", padding: "6px 10px", fontWeight: 900, cursor: "pointer" }}
+                        style={{
+                          position: "absolute",
+                          top: 8,
+                          right: 8,
+                          borderRadius: 999,
+                          border: `1px solid ${COLORS.border}`,
+                          background: "rgba(255,255,255,0.95)",
+                          padding: "6px 10px",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
                       >
                         Quitar
                       </button>
@@ -502,12 +583,16 @@ export default function EditarPage() {
             {error && <div style={{ color: COLORS.danger, fontWeight: 900 }}>{error}</div>}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button type="submit" disabled={guardando} style={primaryBtn(guardando)}>
+              <button type="submit" disabled={guardando || borrando} style={primaryBtn(guardando || borrando)}>
                 {guardando ? "Guardando..." : "Guardar cambios"}
               </button>
 
-              <button type="button" onClick={cargar} disabled={guardando} style={ghostBtn(guardando)}>
+              <button type="button" onClick={cargar} disabled={guardando || borrando} style={ghostBtn(guardando || borrando)}>
                 Recargar
+              </button>
+
+              <button type="button" onClick={eliminar} disabled={guardando || borrando} style={dangerBtn(guardando || borrando)}>
+                {borrando ? "Eliminando..." : "Eliminar anuncio"}
               </button>
             </div>
           </form>

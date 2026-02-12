@@ -18,6 +18,8 @@ const COLORS = {
   subtext: "#64748B",
   muted: "#94A3B8",
   danger: "#DC2626",
+  success: "#16A34A",
+  warn: "#F59E0B",
 };
 
 const CATEGORIAS = [
@@ -32,32 +34,6 @@ const CATEGORIAS = [
 ] as const;
 
 type Categoria = (typeof CATEGORIAS)[number];
-
-const SUBCATEGORIAS: Record<Categoria, string[]> = {
-  Muebles: ["Sala", "Comedor", "Dormitorio", "Oficina", "Exterior/Jardín", "Decoración", "Almacenaje", "Otros"],
-  "Electrodomésticos": ["Cocina", "Lavado", "Climatización", "Limpieza", "Pequeño electrodoméstico", "Otros"],
-  "Tecnología": ["Celulares", "Computadoras", "Tablets", "TV & Audio", "Consolas", "Cámaras", "Accesorios", "Otros"],
-  "Motos y vehículos": ["Carros", "Motos", "Repuestos", "Accesorios", "Servicios", "Otros"],
-  "Deportes & outdoor": ["Camping", "Ciclismo", "Fitness", "Surf", "Fútbol", "Pesca", "Otros"],
-  "Hogar": ["Cocina", "Baño", "Iluminación", "Textil", "Organización", "Herramientas", "Otros"],
-  "Alquiler de casas y apartamentos": ["Casa", "Apartamento", "Habitación", "Bodega", "Otros"],
-  "Otros": ["Varios"],
-};
-
-const MESES = [
-  "Enero",
-  "Febrero",
-  "Marzo",
-  "Abril",
-  "Mayo",
-  "Junio",
-  "Julio",
-  "Agosto",
-  "Septiembre",
-  "Octubre",
-  "Noviembre",
-  "Diciembre",
-] as const;
 
 function inputStyle(): React.CSSProperties {
   return {
@@ -125,10 +101,18 @@ async function uploadToCloudinary(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("file", file);
 
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
+  const res = await fetch("/api/upload", {
+    method: "POST",
+    body: fd,
+  });
+
   const data = await res.json().catch(() => ({}));
 
-  if (!res.ok) throw new Error(data?.error || "Error subiendo foto");
+  if (!res.ok) {
+    const msg = data?.error || "Error subiendo foto";
+    throw new Error(msg);
+  }
+
   if (!data?.url) throw new Error("Upload sin URL");
   return String(data.url);
 }
@@ -141,26 +125,26 @@ export default function PublicarPage() {
   const [provincia, setProvincia] = useState<(typeof PROVINCIAS)[number]>("San José");
   const [canton, setCanton] = useState(CANTONES["San José"][0]);
   const [categoria, setCategoria] = useState<Categoria>("Muebles");
-
-  // ✅ subcategoría por selector (como estaba)
-  const subcats = useMemo(() => SUBCATEGORIAS[categoria] ?? ["Otros"], [categoria]);
-  const [subcategoria, setSubcategoria] = useState<string>(SUBCATEGORIAS["Muebles"][0] || "Otros");
-
+  const [subcategoria, setSubcategoria] = useState<string>(""); // opcional si tu UI ya lo setea en otro sitio
   const [descripcion, setDescripcion] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
-
-  // ✅ Vehículos
-  const [vehiculoAno, setVehiculoAno] = useState<string>("");
-  const [marchamoAlDia, setMarchamoAlDia] = useState<boolean>(true);
-  const [dekraAlDia, setDekraAlDia] = useState<boolean>(true);
-  const [dekraMes, setDekraMes] = useState<(typeof MESES)[number]>("Enero");
-
   const [files, setFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [publicando, setPublicando] = useState(false);
 
+  // 🚗 vehículos
+  const [vehiculoAno, setVehiculoAno] = useState<string>("");
+  const [marchamoAlDia, setMarchamoAlDia] = useState<string>(""); // "", "si", "no"
+  const [dekraAlDia, setDekraAlDia] = useState<string>(""); // "", "si", "no"
+  const [dekraMes, setDekraMes] = useState<string>("");
+
+  // 🔐 token mostrado una sola vez
+  const [ownerToken, setOwnerToken] = useState<string | null>(null);
+  const [nuevoId, setNuevoId] = useState<string | null>(null);
+
   const cantonesDisponibles = useMemo(() => CANTONES[provincia], [provincia]);
+  const esVehiculo = categoria === "Motos y vehículos";
 
   function limpiarPreviews(next: string[]) {
     previewUrls.forEach((u) => {
@@ -184,7 +168,8 @@ export default function PublicarPage() {
     }
 
     setFiles(list);
-    limpiarPreviews(list.map((f) => URL.createObjectURL(f)));
+    const previews = list.map((f) => URL.createObjectURL(f));
+    limpiarPreviews(previews);
   }
 
   function quitarFoto(idx: number) {
@@ -192,6 +177,13 @@ export default function PublicarPage() {
     const nextPreviews = previewUrls.filter((_, i) => i !== idx);
     setFiles(nextFiles);
     limpiarPreviews(nextPreviews);
+  }
+
+  async function copiarToken() {
+    if (!ownerToken) return;
+    try {
+      await navigator.clipboard.writeText(ownerToken);
+    } catch {}
   }
 
   async function publicar(e: React.FormEvent) {
@@ -229,40 +221,32 @@ export default function PublicarPage() {
         return;
       }
 
-      const esVehiculos = categoria === "Motos y vehículos";
-      let anoNum: number | undefined = undefined;
-
-      if (esVehiculos) {
-        anoNum = Number(vehiculoAno);
-        if (!Number.isFinite(anoNum) || anoNum < 1950 || anoNum > new Date().getFullYear() + 1) {
-          setError("Año del vehículo inválido.");
-          return;
-        }
-      }
-
       let fotos: string[] = [];
       if (files.length > 0) {
-        for (const f of files) fotos.push(await uploadToCloudinary(f));
+        fotos = [];
+        for (const f of files) {
+          const url = await uploadToCloudinary(f);
+          fotos.push(url);
+        }
       }
 
       const payload: any = {
         titulo: titulo.trim(),
         precio: precioNum,
         provincia,
-        canton,
+        ciudad: canton, // tu API normaliza a ciudad
         categoria,
-        // ✅ guardamos la subcategoría seleccionada
-        subcategoria: String(subcategoria || "").trim() || undefined,
+        subcategoria: subcategoria || undefined,
         descripcion: descripcion.trim(),
         whatsapp: ws,
         fotos,
       };
 
-      if (esVehiculos) {
-        payload.vehiculoAno = anoNum;
-        payload.marchamoAlDia = marchamoAlDia;
-        payload.dekraAlDia = dekraAlDia;
-        payload.dekraMes = dekraMes;
+      if (esVehiculo) {
+        payload.vehiculoAno = vehiculoAno ? Number(vehiculoAno) : undefined;
+        payload.marchamoAlDia = marchamoAlDia === "si" ? true : marchamoAlDia === "no" ? false : undefined;
+        payload.dekraAlDia = dekraAlDia === "si" ? true : dekraAlDia === "no" ? false : undefined;
+        payload.dekraMes = dekraMes ? dekraMes.trim() : undefined;
       }
 
       const res = await fetch("/api/anuncios", {
@@ -272,9 +256,13 @@ export default function PublicarPage() {
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Error guardando anuncio");
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Error guardando anuncio");
+      }
 
-      router.push("/");
+      // 🔐 mostramos token una sola vez
+      setOwnerToken(String(data?.ownerToken || ""));
+      setNuevoId(String(data?.anuncio?.id || ""));
     } catch (err: any) {
       setError(err?.message || "Error al publicar.");
     } finally {
@@ -282,8 +270,98 @@ export default function PublicarPage() {
     }
   }
 
-  const esAlquiler = categoria === "Alquiler de casas y apartamentos";
-  const esVehiculos = categoria === "Motos y vehículos";
+  // Si ya hay token, mostramos “pantalla de éxito” y no el form
+  if (ownerToken && nuevoId) {
+    const url = `/anuncio/${encodeURIComponent(nuevoId)}`;
+    return (
+      <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 16px 60px" }}>
+          <div
+            style={{
+              background: COLORS.card,
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 20,
+              padding: 24,
+              boxShadow: "0 10px 30px rgba(10,20,40,0.06)",
+            }}
+          >
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 950, color: COLORS.text }}>✅ Anuncio publicado</h1>
+
+            <div style={{ marginTop: 10, color: COLORS.subtext, fontWeight: 800, lineHeight: 1.5 }}>
+              <b style={{ color: COLORS.warn }}>IMPORTANTE:</b> este es tu <b>código de propietario</b>. <br />
+              <b>Guárdalo ahora.</b> Sin él no podrás <b>editar</b> ni <b>borrar</b> el anuncio.
+              <br />
+              <span style={{ color: COLORS.muted }}>Este código solo se muestra una vez.</span>
+            </div>
+
+            <div
+              style={{
+                marginTop: 14,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 16,
+                padding: 14,
+                background: "#FBFCFF",
+              }}
+            >
+              <div style={{ fontWeight: 950, color: COLORS.text }}>Tu código:</div>
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 22,
+                  fontWeight: 950,
+                  letterSpacing: 1,
+                  color: COLORS.text,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                }}
+              >
+                {ownerToken}
+              </div>
+
+              <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button type="button" onClick={copiarToken} style={primaryBtn(false)}>
+                  Copiar código
+                </button>
+                <button type="button" onClick={() => router.push(url)} style={ghostBtn()}>
+                  Ir al anuncio →
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => router.push("/")} style={ghostBtn()}>
+                Volver a Home
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // reset para publicar otro
+                  setOwnerToken(null);
+                  setNuevoId(null);
+                  setTitulo("");
+                  setPrecio("");
+                  setDescripcion("");
+                  setWhatsapp("");
+                  setFiles([]);
+                  limpiarPreviews([]);
+                  setCategoria("Muebles");
+                  setSubcategoria("");
+                  setProvincia("San José");
+                  setCanton(CANTONES["San José"][0]);
+                  setVehiculoAno("");
+                  setMarchamoAlDia("");
+                  setDekraAlDia("");
+                  setDekraMes("");
+                }}
+                style={ghostBtn()}
+              >
+                Publicar otro
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className={inter.className} style={{ background: COLORS.bg, minHeight: "100vh" }}>
@@ -375,12 +453,7 @@ export default function PublicarPage() {
             <select
               style={selectStyle()}
               value={categoria}
-              onChange={(e) => {
-                const next = e.target.value as Categoria;
-                setCategoria(next);
-                // ✅ al cambiar categoría, resetea subcat a la primera de esa categoría
-                setSubcategoria((SUBCATEGORIAS[next] && SUBCATEGORIAS[next][0]) ? SUBCATEGORIAS[next][0] : "Otros");
-              }}
+              onChange={(e) => setCategoria(e.target.value as Categoria)}
             >
               {CATEGORIAS.map((c) => (
                 <option key={c} value={c}>
@@ -389,52 +462,8 @@ export default function PublicarPage() {
               ))}
             </select>
 
-            {/* ✅ Subcategorías por selector */}
-            <select style={selectStyle()} value={subcategoria} onChange={(e) => setSubcategoria(e.target.value)}>
-              {subcats.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-
-            {esVehiculos && (
-              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
-                <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 10 }}>Datos del vehículo</div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <input
-                    style={inputStyle()}
-                    placeholder="Año del vehículo (obligatorio)"
-                    value={vehiculoAno}
-                    onChange={(e) => setVehiculoAno(e.target.value)}
-                    inputMode="numeric"
-                  />
-
-                  <select style={selectStyle()} value={dekraMes} onChange={(e) => setDekraMes(e.target.value as any)}>
-                    {MESES.map((m) => (
-                      <option key={m} value={m}>
-                        Mes DEKRA: {m}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                  <select style={selectStyle()} value={marchamoAlDia ? "si" : "no"} onChange={(e) => setMarchamoAlDia(e.target.value === "si")}>
-                    <option value="si">Marchamo al día: Sí</option>
-                    <option value="no">Marchamo al día: No</option>
-                  </select>
-
-                  <select style={selectStyle()} value={dekraAlDia ? "si" : "no"} onChange={(e) => setDekraAlDia(e.target.value === "si")}>
-                    <option value="si">DEKRA al día: Sí</option>
-                    <option value="no">DEKRA al día: No</option>
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {esAlquiler && (
+            {/* Vehículos */}
+            {esVehiculo && (
               <div
                 style={{
                   border: `1px solid ${COLORS.border}`,
@@ -442,10 +471,41 @@ export default function PublicarPage() {
                   borderRadius: 14,
                   padding: 12,
                   color: COLORS.text,
-                  fontWeight: 700,
+                  fontWeight: 800,
+                  display: "grid",
+                  gap: 10,
                 }}
               >
-                🏠 <b>Alquiler:</b> solo anuncios directos entre particulares. <b>No inmobiliarias</b> ni anuncios duplicados.
+                <div style={{ fontWeight: 950 }}>🚗 Datos del vehículo (opcional)</div>
+
+                <input
+                  style={inputStyle()}
+                  placeholder="Año (ej: 2014)"
+                  value={vehiculoAno}
+                  onChange={(e) => setVehiculoAno(e.target.value)}
+                  inputMode="numeric"
+                />
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <select style={selectStyle()} value={marchamoAlDia} onChange={(e) => setMarchamoAlDia(e.target.value)}>
+                    <option value="">Marchamo al día: —</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+
+                  <select style={selectStyle()} value={dekraAlDia} onChange={(e) => setDekraAlDia(e.target.value)}>
+                    <option value="">DEKRA al día: —</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+
+                <input
+                  style={inputStyle()}
+                  placeholder="Mes que le toca DEKRA (ej: Marzo)"
+                  value={dekraMes}
+                  onChange={(e) => setDekraMes(e.target.value)}
+                />
               </div>
             )}
 
@@ -466,12 +526,21 @@ export default function PublicarPage() {
 
             <div style={{ border: `1px dashed ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#FBFCFF" }}>
               <div style={{ fontWeight: 900, color: COLORS.text }}>Fotos (máx. 5)</div>
-              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>Se subirán automáticamente.</div>
+              <div style={{ marginTop: 6, color: COLORS.subtext, fontSize: 13, fontWeight: 600 }}>
+                Se subirán a Cloudinary automáticamente.
+              </div>
 
               <input style={{ marginTop: 10 }} type="file" accept="image/*" multiple onChange={onPickFotos} />
 
               {previewUrls.length > 0 && (
-                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                    gap: 10,
+                  }}
+                >
                   {previewUrls.map((src, i) => (
                     <div
                       key={i}

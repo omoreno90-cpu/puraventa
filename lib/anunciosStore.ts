@@ -27,8 +27,8 @@ export type Anuncio = {
   dekraAlDia?: boolean;
   dekraMes?: string;
 
-  // 🔐 Propiedad del anuncio (secreto)
-  ownerToken?: string;
+  // 🔐 Propietario (NO se expone en API)
+  ownerTokenHash?: string;
 };
 
 const IDS_KEY = "puraventa:anuncios:ids";
@@ -99,7 +99,9 @@ export async function listAnuncios(limit = 200): Promise<Anuncio[]> {
   if (ids.length === 0) {
     const legacy = readLegacyAll();
     if (legacy.length > 0) {
-      for (const a of legacy) if (a?.id) await ensureInRedis(a);
+      for (const a of legacy) {
+        if (a?.id) await ensureInRedis(a);
+      }
       const ids2Raw = (await redis.lrange(IDS_KEY, 0, Math.max(0, limit - 1))) as unknown;
       const ids2 = (Array.isArray(ids2Raw) ? ids2Raw : []) as string[];
       return await listByIds(ids2);
@@ -152,6 +154,8 @@ export async function updateAnuncio(id: string, patch: Partial<Anuncio>): Promis
     ...patch,
     id: String(current.id),
     updatedAt: new Date().toISOString(),
+    // seguridad: nunca dejes que patch cambie el ownerTokenHash
+    ownerTokenHash: current.ownerTokenHash,
   };
 
   await ensureInRedis(updated);

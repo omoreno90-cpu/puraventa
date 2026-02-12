@@ -5,22 +5,33 @@ function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
+function stripPrivate(a: any) {
+  if (!a || typeof a !== "object") return a;
+  const { ownerTokenHash, ...rest } = a;
+  return rest;
+}
+
+function toHex(buf: ArrayBuffer) {
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function sha256Hex(input: string) {
+  const enc = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", enc);
+  return toHex(digest);
+}
+
 function makeOwnerToken() {
-  // token fuerte y simple
-  return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  // 12 chars, fácil de copiar
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }
 
 export async function GET() {
   try {
     const anuncios = await listAnuncios(200);
-
-    // 🔒 nunca expongas ownerToken en listados
-    const safe = anuncios.map((a) => {
-      const { ownerToken, ...rest } = a as any;
-      return rest;
-    });
-
-    return json({ ok: true, anuncios: safe });
+    return json({ ok: true, anuncios: anuncios.map(stripPrivate) });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
   }
@@ -30,7 +41,6 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
-    // mínimos
     const titulo = String(body?.titulo ?? "").trim();
     const descripcion = String(body?.descripcion ?? "").trim();
     const provincia = String(body?.provincia ?? "").trim();
@@ -64,7 +74,9 @@ export async function POST(req: Request) {
 
     const dekraMes = String(body?.dekraMes ?? "").trim() || undefined;
 
+    // 🔐 owner token (solo una vez)
     const ownerToken = makeOwnerToken();
+    const ownerTokenHash = await sha256Hex(ownerToken);
 
     const anuncio: Anuncio = {
       id: crypto.randomUUID(),
@@ -77,6 +89,7 @@ export async function POST(req: Request) {
       fotos,
       categoria: categoria || undefined,
       subcategoria: subcategoria || undefined,
+
       createdAt: new Date().toISOString(),
       updatedAt: undefined,
 
@@ -85,22 +98,18 @@ export async function POST(req: Request) {
       dekraAlDia,
       dekraMes,
 
-      ownerToken,
+      ownerTokenHash,
     };
 
     await addAnuncio(anuncio);
 
-    // lista safe
     const anuncios = await listAnuncios(200);
-    const safe = anuncios.map((a) => {
-      const { ownerToken, ...rest } = a as any;
-      return rest;
+    return json({
+      ok: true,
+      anuncio: stripPrivate(anuncio),
+      ownerToken, // 👈 SOLO aquí
+      anuncios: anuncios.map(stripPrivate),
     });
-
-    // 🔒 Devolvemos ownerToken SOLO en respuesta del POST
-    // para que el frontend lo guarde en localStorage.
-    const { ownerToken: _ot, ...safeAnuncio } = anuncio as any;
-    return json({ ok: true, anuncio: safeAnuncio, ownerToken, anuncios: safe });
   } catch (e: any) {
     return json({ ok: false, error: e?.message || "Error creando anuncio" }, 500);
   }
