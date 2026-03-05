@@ -1,107 +1,122 @@
-import { NextResponse } from "next/server"
-import { promises as fs } from "fs"
-import path from "path"
+import { NextRequest, NextResponse } from "next/server";
 
 type Anuncio = {
-  id: string
-  titulo: string
-  descripcion: string
-  precio: number
-  provincia: string
-  ciudad: string
-  whatsapp: string
-  fotos?: string[]
-  createdAt?: string
-  updatedAt?: string
+  id: string;
+  titulo: string;
+  descripcion: string;
+  precio: number;
+  provincia: string;
+  ciudad?: string;
+  whatsapp?: string;
+  fotos?: string[];
+  categoria?: string;
+  subcategoria?: string;
+  createdAt?: string;
+  updatedAt?: string;
+
+  vehiculoAno?: number;
+  marchamoAlDia?: boolean;
+  dekraAlDia?: boolean;
+  dekraMes?: string;
+};
+
+function envOrThrow(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Falta ${name} en env.`);
+  return v;
 }
 
-function dataFilePath() {
-  return path.join(process.cwd(), "data", "anuncios.json")
+const REDIS_URL = () => envOrThrow("UPSTASH_REDIS_REST_URL").replace(/\/$/, "");
+const REDIS_TOKEN = () => envOrThrow("UPSTASH_REDIS_REST_TOKEN");
+
+async function redis(cmdPath: string) {
+  const res = await fetch(`${REDIS_URL()}/${cmdPath}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REDIS_TOKEN()}` },
+    cache: "no-store",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "Error Upstash");
+  return data?.result;
 }
+
+const KEY_ALL = "pv:anuncios:v1";
 
 async function readAll(): Promise<Anuncio[]> {
-  const file = dataFilePath()
+  const raw = await redis(`get/${encodeURIComponent(KEY_ALL)}`);
+  if (!raw) return [];
   try {
-    const raw = await fs.readFile(file, "utf8")
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as Anuncio[]) : []
+    return JSON.parse(String(raw)) as Anuncio[];
   } catch {
-    return []
+    return [];
   }
 }
 
-async function writeAll(anuncios: Anuncio[]) {
-  const file = dataFilePath()
-  await fs.mkdir(path.dirname(file), { recursive: true })
-  await fs.writeFile(file, JSON.stringify(anuncios, null, 2), "utf8")
+async function writeAll(list: Anuncio[]) {
+  await redis(`set/${encodeURIComponent(KEY_ALL)}/${encodeURIComponent(JSON.stringify(list))}`);
 }
 
-export async function GET(
-  _req: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params
-  const anuncios = await readAll()
-  const anuncio = anuncios.find((a) => a.id === id)
+export async function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
 
-  if (!anuncio) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 })
+    const all = await readAll();
+    const anuncio = all.find((a) => a.id === id);
+
+    if (!anuncio) {
+      return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true, anuncio }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Error" }, { status: 500 });
   }
-
-  return NextResponse.json({ ok: true, anuncio })
 }
 
-export async function PUT(
-  req: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params
-  const body = await req.json().catch(() => null)
+export async function PUT(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
 
-  if (!body) {
-    return NextResponse.json({ ok: false, error: "Body inválido" }, { status: 400 })
+    const patch = (await req.json().catch(() => ({}))) as Partial<Anuncio>;
+    const all = await readAll();
+
+    const idx = all.findIndex((a) => a.id === id);
+    if (idx === -1) {
+      return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
+    }
+
+    const prev = all[idx];
+    const next: Anuncio = {
+      ...prev,
+      ...patch,
+      id: prev.id,
+      createdAt: prev.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = next;
+    await writeAll(all);
+
+    return NextResponse.json({ ok: true, anuncio: next }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Error" }, { status: 500 });
   }
-
-  const anuncios = await readAll()
-  const idx = anuncios.findIndex((a) => a.id === id)
-
-  if (idx === -1) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 })
-  }
-
-  const prev = anuncios[idx]
-
-  const updated: Anuncio = {
-    ...prev,
-    titulo: typeof body.titulo === "string" ? body.titulo : prev.titulo,
-    descripcion: typeof body.descripcion === "string" ? body.descripcion : prev.descripcion,
-    precio: Number.isFinite(Number(body.precio)) ? Number(body.precio) : prev.precio,
-    provincia: typeof body.provincia === "string" ? body.provincia : prev.provincia,
-    ciudad: typeof body.ciudad === "string" ? body.ciudad : prev.ciudad,
-    whatsapp: typeof body.whatsapp === "string" ? body.whatsapp : prev.whatsapp,
-    fotos: Array.isArray(body.fotos) ? body.fotos.map(String) : prev.fotos,
-    updatedAt: new Date().toISOString(),
-  }
-
-  anuncios[idx] = updated
-  await writeAll(anuncios)
-
-  return NextResponse.json({ ok: true, anuncio: updated })
 }
 
-export async function DELETE(
-  _req: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params
-  const anuncios = await readAll()
+export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
 
-  const next = anuncios.filter((a) => a.id !== id)
+    const all = await readAll();
+    const next = all.filter((a) => a.id !== id);
 
-  if (next.length === anuncios.length) {
-    return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 })
+    if (next.length === all.length) {
+      return NextResponse.json({ ok: false, error: "Anuncio no encontrado" }, { status: 404 });
+    }
+
+    await writeAll(next);
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "Error" }, { status: 500 });
   }
-
-  await writeAll(next)
-  return NextResponse.json({ ok: true })
 }
