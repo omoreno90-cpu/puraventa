@@ -1,116 +1,76 @@
-﻿import { NextResponse } from "next/server";
-import { addAnuncio, listAnuncios, type Anuncio } from "@/lib/anunciosStore";
+﻿import fs from "fs"
+import path from "path"
+import { auth } from "@clerk/nextjs/server"
 
-function json(data: any, status = 200) {
-  return NextResponse.json(data, { status });
+export const runtime = "nodejs"
+
+function getFilePath() {
+  return path.join(process.cwd(), "data", "anuncios.json")
 }
 
-function stripPrivate(a: any) {
-  if (!a || typeof a !== "object") return a;
-  const { ownerTokenHash, ...rest } = a;
-  return rest;
-}
-
-function toHex(buf: ArrayBuffer) {
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function sha256Hex(input: string) {
-  const enc = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", enc);
-  return toHex(digest);
-}
-
-function makeOwnerToken() {
-  // 12 chars, fácil de copiar
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-}
-
-export async function GET() {
+function readAnuncios() {
   try {
-    const anuncios = await listAnuncios(200);
-    return json({ ok: true, anuncios: anuncios.map(stripPrivate) });
-  } catch (e: any) {
-    return json({ ok: false, error: e?.message || "Error listando anuncios" }, 500);
+    const raw = fs.readFileSync(getFilePath(), "utf8")
+    return JSON.parse(raw)
+  } catch {
+    return []
   }
 }
+
+function writeAnuncios(anuncios: any[]) {
+  fs.writeFileSync(getFilePath(), JSON.stringify(anuncios, null, 2))
+}
+
+/* CREAR ANUNCIO */
 
 export async function POST(req: Request) {
-  try {
-    const body = (await req.json().catch(() => ({}))) as any;
 
-    const titulo = String(body?.titulo ?? "").trim();
-    const descripcion = String(body?.descripcion ?? "").trim();
-    const provincia = String(body?.provincia ?? "").trim();
-    const ciudad = String(body?.ciudad ?? body?.canton ?? "").trim();
-    const whatsapp = String(body?.whatsapp ?? "").trim();
-    const categoria = String(body?.categoria ?? "").trim();
-    const subcategoria = String(body?.subcategoria ?? "").trim();
-    const fotos = Array.isArray(body?.fotos) ? body.fotos.map(String) : [];
+  const { userId } = await auth()
 
-    const precioNum = Number(body?.precio);
-    if (!titulo || titulo.length < 3) return json({ ok: false, error: "Título inválido" }, 400);
-    if (!descripcion || descripcion.length < 5) return json({ ok: false, error: "Descripción inválida" }, 400);
-    if (!Number.isFinite(precioNum) || precioNum <= 0) return json({ ok: false, error: "Precio inválido" }, 400);
-    if (!provincia) return json({ ok: false, error: "Provincia inválida" }, 400);
-
-    // 🚗 Vehículos (opcionales)
-    const vehiculoAno =
-      body?.vehiculoAno === undefined || body?.vehiculoAno === null || body?.vehiculoAno === ""
-        ? undefined
-        : Number(body.vehiculoAno);
-
-    const marchamoAlDia =
-      body?.marchamoAlDia === undefined || body?.marchamoAlDia === null || body?.marchamoAlDia === ""
-        ? undefined
-        : Boolean(body.marchamoAlDia);
-
-    const dekraAlDia =
-      body?.dekraAlDia === undefined || body?.dekraAlDia === null || body?.dekraAlDia === ""
-        ? undefined
-        : Boolean(body.dekraAlDia);
-
-    const dekraMes = String(body?.dekraMes ?? "").trim() || undefined;
-
-    // 🔐 owner token (solo una vez)
-    const ownerToken = makeOwnerToken();
-    const ownerTokenHash = await sha256Hex(ownerToken);
-
-    const anuncio: Anuncio = {
-      id: crypto.randomUUID(),
-      titulo,
-      descripcion,
-      precio: precioNum,
-      provincia,
-      ciudad,
-      whatsapp,
-      fotos,
-      categoria: categoria || undefined,
-      subcategoria: subcategoria || undefined,
-
-      createdAt: new Date().toISOString(),
-      updatedAt: undefined,
-
-      vehiculoAno,
-      marchamoAlDia,
-      dekraAlDia,
-      dekraMes,
-
-      ownerTokenHash,
-    };
-
-    await addAnuncio(anuncio);
-
-    const anuncios = await listAnuncios(200);
-    return json({
-      ok: true,
-      anuncio: stripPrivate(anuncio),
-      ownerToken, // 👈 SOLO aquí
-      anuncios: anuncios.map(stripPrivate),
-    });
-  } catch (e: any) {
-    return json({ ok: false, error: e?.message || "Error creando anuncio" }, 500);
+  if (!userId) {
+    return Response.json(
+      { ok: false, error: "Debes iniciar sesión" },
+      { status: 401 }
+    )
   }
+
+  const body = await req.json()
+
+  const anuncios = readAnuncios()
+
+  const anuncio = {
+    id: Date.now().toString(),
+    userId,
+    titulo: body.titulo,
+    descripcion: body.descripcion,
+    precio: body.precio,
+    provincia: body.provincia,
+    ciudad: body.ciudad,
+    categoria: body.categoria,
+    subcategoria: body.subcategoria,
+    whatsapp: body.whatsapp,
+    fotos: body.fotos || [],
+    createdAt: new Date().toISOString()
+  }
+
+  anuncios.unshift(anuncio)
+
+  writeAnuncios(anuncios)
+
+  return Response.json({
+    ok: true,
+    anuncio
+  })
+}
+
+/* LISTAR ANUNCIOS */
+
+export async function GET() {
+
+  const anuncios = readAnuncios()
+
+  return Response.json({
+    ok: true,
+    anuncios
+  })
 }
