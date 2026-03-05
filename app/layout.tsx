@@ -11,17 +11,20 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-  if (!publishableKey) {
-    throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
-  }
-
   return (
-    <ClerkProvider publishableKey={publishableKey}>
-      <html lang="es">
-        <body>{children}</body>
-      </html>
-    </ClerkProvider>
+    <html lang="es">
+      <body>
+        {publishableKey ? (
+          <ClerkProvider publishableKey={publishableKey}>
+            {children}
+          </ClerkProvider>
+        ) : (
+          children
+        )}
+      </body>
+    </html>
   );
 }
