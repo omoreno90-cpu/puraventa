@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // IMPORTANTE:
+  // NO uses output: "export" con Clerk.
+  // (Si lo tenías, bórralo.)
 };
 
 export default nextConfig;
