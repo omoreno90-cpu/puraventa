@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   description: "Compra y vende en Costa Rica",
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: {
