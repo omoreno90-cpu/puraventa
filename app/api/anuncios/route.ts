@@ -1,61 +1,31 @@
-﻿import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { getAll, saveAll, newId, type Anuncio } from "@/lib/anunciosStore";
+﻿import { Redis } from "@upstash/redis";
+import { NextResponse } from "next/server";
 
-export async function GET() {
-  const anuncios = await getAll();
-  return NextResponse.json({ ok: true, anuncios });
-}
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ ok: false, error: "No autenticado" }, { status: 401 });
-  }
+  try {
+    const data = await req.json();
 
-  const body = await req.json().catch(() => null);
-  if (!body) {
-    return NextResponse.json({ ok: false, error: "Body inválido" }, { status: 400 });
-  }
+    const id = Date.now().toString();
 
-  const now = new Date().toISOString();
+    const anuncio = {
+      id,
+      ...data,
+      createdAt: new Date().toISOString(),
+    };
 
-  const anuncio: Anuncio = {
-    id: newId(),
-    titulo: String(body.titulo || "").trim(),
-    descripcion: String(body.descripcion || "").trim(),
-    precio: Number(body.precio || 0),
-    provincia: String(body.provincia || "").trim(),
-    ciudad: String(body.ciudad || "").trim(),
-    categoria: body.categoria ? String(body.categoria) : undefined,
-    subcategoria: body.subcategoria ? String(body.subcategoria) : undefined,
-    whatsapp: String(body.whatsapp || "").trim(),
-    fotos: Array.isArray(body.fotos) ? body.fotos.map(String) : [],
-    ownerId: userId,
-    createdAt: now,
-    updatedAt: now,
-    vehiculoAno: Number.isFinite(Number(body.vehiculoAno)) ? Number(body.vehiculoAno) : undefined,
-    marchamoAlDia: typeof body.marchamoAlDia === "boolean" ? body.marchamoAlDia : undefined,
-    dekraAlDia: typeof body.dekraAlDia === "boolean" ? body.dekraAlDia : undefined,
-    dekraMes: typeof body.dekraMes === "string" ? body.dekraMes : undefined,
-  };
+    await redis.set(`anuncio:${id}`, anuncio);
 
-  if (anuncio.titulo.length < 5) {
-    return NextResponse.json({ ok: false, error: "Título muy corto" }, { status: 400 });
+    return NextResponse.json({ ok: true, anuncio });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { ok: false, error: "Error guardando anuncio" },
+      { status: 500 }
+    );
   }
-  if (anuncio.descripcion.length < 10) {
-    return NextResponse.json({ ok: false, error: "Descripción muy corta" }, { status: 400 });
-  }
-  if (!Number.isFinite(anuncio.precio) || anuncio.precio <= 0) {
-    return NextResponse.json({ ok: false, error: "Precio inválido" }, { status: 400 });
-  }
-  if (!anuncio.whatsapp || anuncio.whatsapp.replace(/\D/g, "").length < 8) {
-    return NextResponse.json({ ok: false, error: "WhatsApp inválido" }, { status: 400 });
-  }
-
-  const anuncios = await getAll();
-  anuncios.unshift(anuncio);
-  await saveAll(anuncios);
-
-  return NextResponse.json({ ok: true, anuncio });
 }
