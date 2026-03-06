@@ -1,5 +1,11 @@
 import "./globals.css";
-import Providers from "./providers";
+import { ClerkProvider } from "@clerk/nextjs";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "PuraVenta",
+  description: "Compra y vende en Costa Rica",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +15,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es">
-      <body>
-        <Providers>{children}</Providers>
-      </body>
-    </html>
+    <ClerkProvider publishableKey="pk_test_c3RlcmxpbmctcmVkYmlyZC01Ny5jbGVyay5hY2NvdW50cy5kZXYk">
+      <html lang="es">
+        <body>{children}</body>
+      </html>
+    </ClerkProvider>
   );
 }
